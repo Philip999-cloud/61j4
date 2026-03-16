@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==========================================
+    // 1. 客服回報系統 (Support Tickets)
+    // ==========================================
+    match /support_tickets/{ticketId} {
+      allow create: if request.auth != null 
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.keys().hasAll(['uid', 'description', 'type', 'status', 'timestamp'])
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() > 0
+                    && request.resource.data.description.size() <= 2000;
+
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow update, delete: if false; // 嚴格禁止前端修改/刪除，僅限後台管理員
+    }
+
+    // ==========================================
+    // 2. 使用者主資料與子集合 (Users Collection)
+    // ==========================================
+    match /users/{userId} {
+      // 本人可以讀取與創建自己的基本資料
+      allow read, create: if request.auth != null && request.auth.uid == userId;
+      
+      // 關鍵資安防護：允許本人更新資料，但「絕對禁止」從前端竄改 isPro 與 credits 欄位
+      allow update: if request.auth != null 
+                    && request.auth.uid == userId
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPro', 'credits']);
+      
+      // --- 以下是使用者的專屬子集合 (Subcollections) ---
+      
+      // 學習統計數據 
+      match /statistics/{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // 活動紀錄
+      match /activities/{activityId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // 收藏題目
+      match /favorites/{favoriteId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // ==========================================
+    // 3. 預設防護網 (Catch-all Deny)
+    // ==========================================
+    // 只要不是上面明確定義允許的路徑，一律不准讀寫，防止資料外洩
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
