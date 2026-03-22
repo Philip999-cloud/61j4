@@ -1,7 +1,6 @@
 # Run AFTER: gh auth login (GitHub account 9cji4wj)
 # Creates https://github.com/9cji4wj/61j4 if missing, then pushes master.
 
-$ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $ProjectRoot ".git"))) {
     $ProjectRoot = "C:\Users\DELL\Downloads\0315 project"
@@ -10,7 +9,7 @@ if (-not (Test-Path (Join-Path $ProjectRoot ".git"))) {
 $gh = "C:\Program Files\GitHub CLI\gh.exe"
 if (-not (Test-Path $gh)) { $gh = "gh" }
 
-& $gh auth status 2>$null | Out-Null
+$authErr = & $gh auth status 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Not logged in to GitHub. Run first (browser or token prompt):"
     Write-Host "  & `"$gh`" auth login"
