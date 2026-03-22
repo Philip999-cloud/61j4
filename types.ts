@@ -1,0 +1,252 @@
+
+export enum PhaseStatus {
+  IDLE = 'IDLE',
+  LOADING = 'LOADING',
+  COMPLETED = 'COMPLETED',
+  ERROR = 'ERROR'
+}
+
+export type VisualizationType = 'svg' | 'plot' | 'latex' | 'table' | 'interactive' | 'smart-chart' | 'nanobanan_image';
+
+export interface NanoBananVisualizationData {
+  prompt: string;
+  imageUrl?: string;
+  status?: 'pending' | 'completed' | 'failed';
+  altText?: string;
+}
+
+export interface Subject {
+  id: string;
+  name: string;
+  category: 'GSAT' | 'AST';
+}
+
+export interface LinguisticAudit {
+  technical_proficiency_score: number;
+  grammatical_observations: string[];
+  word_count: number;
+  basic_syntax_check: string;
+}
+
+export interface SubjectExpertAnalysis {
+  qualitative_merit_score: number;
+  reasoning_critique: string;
+  critical_thinking_level: string;
+}
+
+export type MathStepType = 'definition' | 'process' | 'result';
+
+export interface MathStep {
+  label: string;
+  type: MathStepType;
+  maxPoints: number;
+  pointsAchieved: number;
+  isAchieved: boolean;
+  feedback?: string;
+}
+
+export interface ParsedMathSegment {
+  text: string;
+  is_error: boolean;
+  error_reason?: string;
+  correction?: string;
+}
+
+/** 結構化一題多解（與 JSON Schema alternative_methods 對齊） */
+export interface AlternativeMethod {
+  method_name: string;
+  description: string;
+  steps: string[];
+}
+
+export interface StemSubScore {
+  sub_id: string;
+  key_molecules_smiles?: string[]; // 新增：該題重要分子的SMILES
+  setup: number;
+  process: number;
+  result: number;
+  logic: number;
+  max_points: number;
+  feedback: string;
+  // Optional: Populated by the strategy layer
+  steps?: MathStep[];
+  // New fields for Stem Subjects
+  concept_correction?: string;     // 觀念辯正
+  alternative_solutions?: string | string[];  // 一題多解（文字或字串陣列，相容舊版）
+  /** 結構化多解法（數理優先） */
+  alternative_methods?: AlternativeMethod[];
+  knowledge_tags?: string[];       // 知識點標註
+  // NEW: For Error Highlighting & Correction
+  correct_calculation?: string;    // 正確算式建議
+  annotations?: TextAnnotation[];  // Legacy: 錯誤圈選 (Substring match)
+  student_input_parsing?: {        // New: Segment-based parsing
+    segments: ParsedMathSegment[];
+  };
+  visualization_code?: any;        // UPDATED: Can be string or JSON Object
+  // NEW: For Science Subjects
+  scientific_notation_and_units?: string;
+  internal_verification?: string;
+}
+
+export interface VocabularyUpgrade {
+  original: string;
+  advanced: string;
+  level: string; // e.g., "A2 -> C1"
+  example: string;
+}
+
+export interface StructureCheck {
+  introduction: string;
+  thesis_statement: string;
+  body_paragraphs: string;
+  conclusion: string;
+  logical_flow: string;
+}
+
+export interface MasterpieceAlignment {
+  publication: string; // e.g., "The Economist" or "New York Times", or Author Name for Chinese
+  quote: string; // The rewritten sentence or example
+  analysis: string; // Why this is better
+}
+
+export interface Compound {
+  name: string;
+  formula?: string;
+  /** 標準 SMILES，供 PubChem／3D 查詢（優先於純中文名） */
+  smiles?: string;
+  /** 精確英文學名或 IUPAC，供 PubChem name API */
+  english_name?: string;
+}
+
+export interface ModeratorSynthesis {
+  final_score: number;
+  max_score: number;
+  ceec_results: {
+    total_score: number;
+    breakdown: Record<string, number>;
+  };
+  stem_sub_results?: StemSubScore[];
+  corrected_article?: string;
+  vocabulary_upgrades?: VocabularyUpgrade[];
+  topic_relevance_analysis?: string;
+  structure_check?: StructureCheck;
+  masterpiece_alignment?: MasterpieceAlignment; // Added for English Composition
+  micro_practice?: string[]; // Added for English Composition
+  strengths: string[];
+  detailed_fixes: DetailedFix[];
+  remarks_zh: string;
+  growth_roadmap: string[];
+  compounds?: Compound[];
+}
+
+export interface PolishedSentence {
+  type: string;
+  original: string;
+  refined: string;
+  logic: string;
+}
+
+export interface ParagraphDiagnosis {
+  paragraph_id: string; // e.g. "第一段"
+  main_idea: string;    // 段落大意
+  critique: string;     // 優缺點評析
+  suggestion: string;   // 修改建議
+}
+
+export interface TextAnnotation {
+  text: string;       // The exact segment from the student text
+  type: string;       // e.g., "解析", "優點", "建議", "計算錯誤"
+  explanation: string; // The content of the tooltip
+}
+
+export interface ImprovementSuggestion {
+  title: string;      // e.g., "加強細節描寫"
+  content: string;    // e.g., "具體描寫..."
+}
+
+export interface RevisionModule {
+  content: string;
+  structure: string;
+  polished_sentences: PolishedSentence[];
+  ideology: string;
+  topic_relevance?: string;
+  structure_matrix?: StructureCheck;
+  paragraph_diagnostics?: ParagraphDiagnosis[];
+  annotations?: TextAnnotation[];         // For interactive highlighting
+  optimized_rewrite?: string;             // For the high-level rewrite example
+  overall_suggestions?: ImprovementSuggestion[]; // For the 3 summary cards
+  masterpiece_alignment?: MasterpieceAlignment; // For Chinese Masterpiece comparison
+}
+
+export interface SubQuestionResult {
+  sub_id: string;
+  score: number;
+  max_points: number;
+  feedback: string;
+  revision_suite: RevisionModule;
+  student_response?: string; // Carries the original student text for display
+  /** 模型閱卷思路（國寫 API 常回傳） */
+  grading_rationale?: string;
+  /** 配分與得分白話說明 */
+  score_breakdown?: string;
+}
+
+export interface SectionResult {
+  section_title: string;
+  total_section_score: number;
+  sub_results: SubQuestionResult[];
+  originalText?: string;
+}
+
+export interface ChineseWritingResults {
+  sections: SectionResult[];
+  overall_remarks: string;
+  timestamp: number;
+  id: string;
+  isSolutionOnly?: boolean; // New flag
+}
+
+export interface GradingResults {
+  phase1: LinguisticAudit;
+  phase2: SubjectExpertAnalysis;
+  phase3: ModeratorSynthesis;
+  timestamp: number;
+  subjectName: string;
+  id: string;
+  originalContent?: string; // Added to store the original input text for highlighting
+  isSolutionOnly?: boolean; // New flag to indicate "Solution Generation Mode"
+}
+
+export type ActivityType = 'grading' | 'theme' | 'subject' | 'settings';
+
+export interface ActivityEntry {
+  id: string;
+  type: ActivityType;
+  title: string;
+  description: string;
+  timestamp: number;
+  data?: any;
+}
+
+export interface DetailedFix {
+  type: string;
+  original: string;
+  corrected: string;
+  refined: string;
+  logic: string;
+}
+
+export interface ChineseTaskContent {
+  question: string;
+  reference: string;
+  student: string;
+}
+
+// 統一管理每個小題的狀態
+export interface QuestionSet {
+  q: string[];       // 題目圖片
+  r: string[];       // 詳解圖片
+  s: string[];       // 學生作答圖片
+  text: string;      // 學生作答文字
+  mode: 'image' | 'text';
+}

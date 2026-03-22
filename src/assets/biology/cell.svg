@@ -1,0 +1,13 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Cell membrane -->
+  <ellipse cx="50" cy="50" rx="45" ry="40" fill="none" stroke="currentColor" stroke-width="2"/>
+  <!-- Nucleus -->
+  <circle cx="50" cy="50" r="15" fill="currentColor" opacity="0.3" stroke="currentColor" stroke-width="1.5"/>
+  <!-- Nucleolus -->
+  <circle cx="53" cy="48" r="5" fill="currentColor" opacity="0.5"/>
+  <!-- ER lines -->
+  <path d="M30 35 Q40 30 35 45 Q30 55 40 60" fill="none" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+  <!-- Mitochondria -->
+  <ellipse cx="72" cy="38" rx="8" ry="5" fill="currentColor" opacity="0.25" stroke="currentColor" stroke-width="1"/>
+  <ellipse cx="28" cy="62" rx="7" ry="4" fill="currentColor" opacity="0.25" stroke="currentColor" stroke-width="1"/>
+</svg>

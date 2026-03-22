@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" style="font-size: 14px;">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>ASEA - Multi-Model Consensus Grading</title>
+    <script>
+      window.global = window;
+      window.require = function(mod) {
+        if (mod === 'raphael' && window.Raphael) return window.Raphael;
+        console.warn('[require shim] Module not found:', mod);
+        return {};
+      };
+      (function() {
+        const originalWarn = console.warn;
+        console.warn = function(...args) {
+          if (args.length > 0 && typeof args[0] === 'string' && args[0].includes('quirks mode')) return;
+          originalWarn.apply(console, args);
+        };
+      })();
+    </script>
+    <!-- 使用 / 指向 public/，避免 Vite 把相對路徑當成要 bundle 的模組而警告 -->
+    <script src="/raphael.min.js"></script>
+    <link rel="stylesheet" href="/katex.min.css" />
+    <link rel="stylesheet" href="/jsxgraph.css" />
+    <script src="/jsxgraphcore.js"></script>
+    <script src="/3Dmol-min.js"></script>
+    <!-- index.css 由 bootstrap.tsx import，Vite 會注入；勿用 /index.css 以免正式打包 404 -->
+</head>
+  <body class="antialiased bg-[var(--bg-main)] text-[var(--text-primary)] transition-colors duration-300">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

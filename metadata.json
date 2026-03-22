@@ -1,0 +1,8 @@
+{
+  "name": "ASEA - AI-Powered Smart Education Assistant",
+  "description": "A next-generation pedagogical tool using a Multi-Model Consensus Grading Engine to provide fair, transparent, and multi-dimensional evaluations of student work.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

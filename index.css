@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/* 【關鍵修復】喚醒 Tailwind v4 的手動深色模式 (Class Strategy) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* index.css - 預設：淺色模式 */
+:root {
+  --bg-main: #F8FAF0;          /* 淺色：主背景 (對應原 slate-50) */
+  --bg-card: #FFFFFF;          /* 淺色：卡片與按鈕背景 */
+  --border-color: #E8EAED;     /* 按鈕邊框 */
+  --shadow-color: rgba(0, 0, 0, 0.05);
+  
+  --text-primary: #202124;     /* 淺色：主文字 */
+  --text-secondary: #5F6368;   /* 淺色：副文字 */
+}
+
+/* 觸發：深色模式 (搭配 html.dark 類別) */
+html.dark, [data-theme="dark"] {
+  --bg-main: #000000;          /* 深色：主背景 (純黑) */
+  --bg-card: #1E1E1E;          /* 深色：卡片背景 (微亮，製造層次) */
+  --border-color: #3C4043;     /* 深色按鈕邊框 */
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  
+  --text-primary: #E8EAED;     /* 深色：主文字反白 */
+  --text-secondary: #9AA0A6;   /* 深色：副文字反白 */
+}
+
+body {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* iOS Native Toggle Switch Styles */
+.theme-toggle-switch {
+  appearance: none;
+  width: 51px;
+  height: 31px;
+  background-color: #E9E9EA; /* 淺色模式下關閉狀態 */
+  border-radius: 9999px;
+  position: relative;
+  cursor: pointer;
+  outline: none;
+  box-sizing: border-box; /* 關鍵防呆：確保 padding 納入寬高計算 */
+  transition: background-color 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+html.dark .theme-toggle-switch {
+  background-color: #39393D; /* 深色模式下的關閉狀態 */
+}
+
+.theme-toggle-switch:checked {
+  background-color: #34C759; /* iOS 原生綠色 */
+}
+
+/* 圓形指示器 (Thumb) */
+.theme-toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  background-color: white;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+/* 啟用狀態的位移 (精準計算，確保不溢出) */
+.theme-toggle-switch:checked::after {
+  /* 51px(總寬) - 27px(圓寬) - 4px(左右padding) = 20px */
+  transform: translateX(20px); 
+}
+/* --- 在 index.css 最下方加入這段終極防護 --- */
+html, body, #root {
+  background-color: var(--bg-main) !important;
+  color: var(--text-primary) !important;
+  min-height: 100vh;
+  width: 100%;
+  margin: 0;
+}
+html, body, #root {
+  background-color: var(--bg-main) !important;
+  color: var(--text-primary) !important;
+  min-height: 100vh !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* 針對 Mac/iOS 的邊緣滾動回彈（Overscroll）顏色修復 */
+html {
+  overscroll-behavior-y: none;
+}

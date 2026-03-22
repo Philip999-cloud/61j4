@@ -1,0 +1,11 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <g id="heart-base">
+    <path d="M50 80 L20 40 A15 15 0 0 1 50 20 A15 15 0 0 1 80 40 Z" fill="#334155" stroke="#1e293b" stroke-width="2"/>
+  </g>
+  <g id="left-ventricle">
+    <path d="M50 80 L20 40 A15 15 0 0 1 50 40 Z" fill="#334155" stroke="#1e293b" stroke-width="2"/>
+  </g>
+  <g id="right-ventricle">
+    <path d="M50 80 L80 40 A15 15 0 0 0 50 40 Z" fill="#334155" stroke="#1e293b" stroke-width="2"/>
+  </g>
+</svg>

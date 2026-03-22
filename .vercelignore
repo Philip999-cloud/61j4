@@ -1,0 +1,6 @@
+android/
+.cursor/
+*.apk
+dist/
+dist-ssr/
+.git/
