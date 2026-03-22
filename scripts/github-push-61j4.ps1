@@ -1,5 +1,5 @@
-# Run AFTER: gh auth login (GitHub account 9cji4wj)
-# Creates https://github.com/9cji4wj/61j4 if missing, then pushes master.
+# Run AFTER: gh auth login
+# Creates <your-login>/61j4 on GitHub, sets origin, pushes master.
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $ProjectRoot ".git"))) {
@@ -13,12 +13,20 @@ $authErr = & $gh auth status 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Not logged in to GitHub. Run first (browser or token prompt):"
     Write-Host "  & `"$gh`" auth login"
-    Write-Host "Use HTTPS; sign in as 9cji4wj."
+    Write-Host "Use HTTPS."
     exit 1
 }
 
+$login = (& $gh api user -q .login 2>&1 | Out-String).Trim()
+if (-not $login) {
+    Write-Host "Could not read GitHub login from gh api user."
+    exit 1
+}
+
+$repoUrl = "https://github.com/$login/61j4.git"
 Set-Location $ProjectRoot
 Write-Host "Project: $ProjectRoot"
+Write-Host "GitHub user: $login"
 
 $createOut = & $gh repo create 61j4 --public -d "ASEA - AI-Powered Smart Education Assistant" 2>&1
 $createText = if ($createOut) { $createOut | Out-String } else { "" }
@@ -30,10 +38,10 @@ if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
 } else {
-    Write-Host "Created https://github.com/9cji4wj/61j4"
+    Write-Host "Created $repoUrl"
 }
 
-git remote set-url origin https://github.com/9cji4wj/61j4.git
+git remote set-url origin $repoUrl
 git push -u origin master
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Host "Done: pushed master to origin."
+Write-Host "Done: pushed master to $repoUrl"
