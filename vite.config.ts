@@ -34,6 +34,39 @@ function stripBuiltHtmlCrossoriginPlugin(): Plugin {
 }
 
 /** 瀏覽器仍會請求 /favicon.ico；導向既有 SVG，避免 preview 404 */
+/** Dev：將除錯 NDJSON 附加寫入工作區 `.cursor/debug-9e0be5.log`（與 PythonFunctionPlotBlock H-plot 對照） */
+function devDebugSessionLogPlugin(): Plugin {
+  return {
+    name: 'dev-debug-session-log',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const urlPath = req.url?.split('?')[0] ?? '';
+        if (req.method !== 'POST' || urlPath !== '/__asea_debug_ndjson') {
+          next();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', () => {
+          try {
+            const dir = path.join(__dirname, '.cursor');
+            fs.mkdirSync(dir, { recursive: true });
+            const file = path.join(dir, 'debug-9e0be5.log');
+            const body = Buffer.concat(chunks).toString('utf8').trim();
+            if (body) fs.appendFileSync(file, `${body}\n`, 'utf8');
+            res.statusCode = 204;
+            res.end();
+          } catch (e) {
+            res.statusCode = 500;
+            res.end(String(e));
+          }
+        });
+      });
+    },
+  };
+}
+
 function faviconIcoRedirectPlugin(): Plugin {
   return {
     name: 'favicon-ico-redirect',
@@ -66,15 +99,45 @@ function faviconIcoRedirectPlugin(): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const viteFirebaseKey = (env.VITE_FIREBASE_API_KEY ?? '').trim();
+  if (
+    mode === 'production' &&
+    (!viteFirebaseKey ||
+      viteFirebaseKey.includes('YOUR_NEW_') ||
+      /^your[_-]?firebase/i.test(viteFirebaseKey))
+  ) {
+    throw new Error(
+      '[vite] 建置中止：.env 的 VITE_FIREBASE_API_KEY 為空或仍為占位字。請填入 Firebase 主控台「專案設定 → 一般 → 您的應用程式 → Config」的 apiKey，存檔後再執行 npm run build。',
+    );
+  }
+
+  const pythonPlotOrigin = env.VITE_PYTHON_PLOT_API_ORIGIN?.trim() || 'http://127.0.0.1:8765';
+  /** Vite dev 使用 3000 時，預設把 /api 轉到 3001，請另開：`vercel dev --listen 3001`。可統一設 VERCEL_DEV_API_ORIGIN。 */
+  const vercelDevForViteServer =
+    env.VERCEL_DEV_API_ORIGIN?.trim() || 'http://127.0.0.1:3001';
+  /** vite preview 佔其他埠時，vercel dev 可維持預設 3000 */
+  const vercelDevForPreview =
+    env.VERCEL_DEV_API_ORIGIN?.trim() || 'http://127.0.0.1:3000';
+  const devServerApiProxy = {
+    '/api/python-plot': { target: pythonPlotOrigin, changeOrigin: true as const },
+    '/api/v1': { target: pythonPlotOrigin, changeOrigin: true as const },
+    '/api': { target: vercelDevForViteServer, changeOrigin: true as const },
+  };
+  const previewApiProxy = {
+    '/api/python-plot': { target: pythonPlotOrigin, changeOrigin: true as const },
+    '/api/v1': { target: pythonPlotOrigin, changeOrigin: true as const },
+    '/api': { target: vercelDevForPreview, changeOrigin: true as const },
+  };
 
   return {
     base: './',
     server: {
       port: 3000,
       host: '0.0.0.0',
+      proxy: devServerApiProxy,
       headers: {
-        // 修正本地開發的 COOP 錯誤（供 Firebase Auth / Google 彈出視窗存取 window.close）
-        'Cross-Origin-Opener-Policy': 'unsafe-none',
+        // Firebase / Google 登入彈窗：允許 opener 關係（較 unsafe-none 更符合隔離語意）
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
         'Cross-Origin-Embedder-Policy': 'unsafe-none',
       },
       fs: {
@@ -85,20 +148,14 @@ export default defineConfig(({ mode }) => {
       port: 4173,
       host: true,
       headers: {
-        'Cross-Origin-Opener-Policy': 'unsafe-none',
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
         'Cross-Origin-Embedder-Policy': 'unsafe-none',
       },
-      // 與 Vercel 相同：前端用 /api/*，由後端轉發。本機請另開終端跑 `vercel dev`（預設常為 :3000）
-      proxy: (() => {
-        const target =
-          env.VERCEL_DEV_API_ORIGIN?.trim() || 'http://127.0.0.1:3000';
-        if (!target) return undefined;
-        return {
-          '/api': { target, changeOrigin: true },
-        };
-      })(),
+      // 與 Vercel 相同：preview 埠與 vercel dev 分開時，/api 轉發至 VERCEL_DEV_API_ORIGIN
+      proxy: previewApiProxy,
     },
     plugins: [
+      devDebugSessionLogPlugin(),
       faviconIcoRedirectPlugin(),
       stripBuiltHtmlCrossoriginPlugin(),
       react(),

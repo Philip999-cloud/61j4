@@ -113,15 +113,26 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
         }
       }
       viewerRef.current = null;
+      // 釋放 WebGL framebuffer，避免隱藏／零尺寸後 GL_INVALID_FRAMEBUFFER_OPERATION 與錯誤累積
+      const el = containerRef.current;
+      if (el) el.replaceChildren();
     };
   }, []);
 
   // 2. 資料更新：清空舊模型，加入新模型 (不重建 Canvas)
   useEffect(() => {
     let isMounted = true;
-    
+    const maxTicks = 200;
+    let ticks = 0;
+
     // 定期確認 viewerRef.current 是否已由初次載入 Effect 建立完成
     const interval = setInterval(() => {
+        ticks += 1;
+        if (ticks > maxTicks) {
+          clearInterval(interval);
+          if (isMounted) setStatus('error');
+          return;
+        }
         if (!viewerRef.current) return;
         clearInterval(interval);
         if (!isMounted) return;
@@ -133,6 +144,11 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
           viewer.setStyle({}, { stick: { radius: 0.15 }, sphere: { radius: 0.3 } });
           viewer.zoomTo();
           viewer.spin('y', 0.5);
+          try {
+            viewer.resize();
+          } catch {
+            /* ignore */
+          }
           viewer.render();
           setStatus('ready');
         };
@@ -148,8 +164,8 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
               viewer.addModel(sdf, 'sdf');
               applyStyle();
             })
-            .catch(err3d => {
-              console.warn(`[Viewer3D] 3D SDF 失敗 (CID ${cid})，嘗試 2D SDF...`, err3d);
+            .catch(() => {
+              // 許多 CID 無 3D 構型，PubChem 回 404 屬正常，不刷 console.warn
               fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF`)
                 .then(res => {
                   if (!res.ok) throw new Error(`2D SDF: HTTP ${res.status}`);
@@ -161,7 +177,7 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
                   applyStyle();
                 })
                 .catch(err2d => {
-                  console.warn(`[Viewer3D] 2D SDF 也失敗 (CID ${cid})，切換至圖片模式...`, err2d);
+                  console.warn(`[Viewer3D] SDF 載入失敗 (CID ${cid})，改顯示 2D 圖`, err2d);
                   if (!isMounted) return;
                   if (fallbackImageUrl) {
                     setStatus('image_fallback');
@@ -197,6 +213,7 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
       <div
         ref={containerRef}
         className="absolute inset-0"
+        data-asea-will-read-frequently
         style={{ visibility: status === 'ready' ? 'visible' : 'hidden' }}
       />
 

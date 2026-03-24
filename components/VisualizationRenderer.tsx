@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { SmartChart } from './SmartChart';
 import Plotly from 'plotly.js-dist';
 import { Image as ImageIcon, Loader2 } from 'lucide-react';
@@ -8,10 +8,29 @@ import { fetchGeneratedImage } from '../geminiService';
 import { ChemCompoundViewer } from './ChemCompoundViewer';
 import { LatexRenderer } from './LatexRenderer';
 import { TextWithChemistry } from './TextWithChemistry';
-import { PhysicsRenderer } from './PhysicsRenderer';
+import { SmartSvg } from './SmartSvg';
 import type { Compound } from '../types';
 import { adaptiveSmoothTrace } from '../utils/curveSmoothing';
+import { patchStem3dPlotlyTraces } from '../utils/plotlyStem3dPatch';
+import { patchPhysics3dTraces } from '../utils/plotlyPhysics3dPatch';
 import { FreeBodyDiagram } from './physics/FreeBodyDiagram';
+import { InclinedPlaneFbd } from './physics/InclinedPlaneFbd';
+import { CollisionDiagram, type CollisionParams } from './physics/CollisionDiagram';
+import { PhysiologyMechanismDiagram, type PhysiologyLayer } from './physiology/PhysiologyMechanismDiagram';
+import { PythonFunctionPlotBlock } from './PythonFunctionPlotBlock';
+import { AseaRenderBlock } from './AseaRenderBlock';
+import {
+  isAseaRenderVizItem,
+  isInclinedPlaneFbdViz,
+  parseInclinedPlanePayload,
+} from '../utils/aseaVizDsl';
+import { geometryJsonToSvg } from '@/src/utils/geometryToSvg';
+import type { GeometryJSON } from '@/src/types/geometry';
+import {
+  isRegularPolygonSolverPayload,
+  solverModePayloadToGeometryJSON,
+} from '@/src/utils/topologyResolver';
+import { normalizePythonPlotViz } from '../utils/normalizePythonPlotViz';
 
 function isChemStoichiometryBlock(text: string): boolean {
   if (!text) return false;
@@ -61,7 +80,22 @@ export function SmartChemText({ text, className = '' }: { text: string; classNam
 }
 
 interface VisualizationItem {
-  type: 'recharts_plot' | 'svg_diagram' | 'plotly_chart' | 'nanobanan_image' | 'mol3d' | 'free_body_diagram';
+  type:
+    | 'recharts_plot'
+    | 'svg_diagram'
+    | 'plotly_chart'
+    | 'nanobanan_image'
+    | 'mol3d'
+    | 'free_body_diagram'
+    | 'python_plot'
+    | 'python_script'
+    | 'physics_collision'
+    | 'physiology_mechanism'
+    | 'asea_render'
+    | 'chemistry_2d'
+    | 'geometry_json'
+    | 'image_description'
+    | 'matplotlib';
   title?: string;
   caption?: string;
   chartType?: 'line' | 'bar' | 'area' | 'scatter' | 'pie';
@@ -70,7 +104,9 @@ interface VisualizationItem {
   data?: any[];
   layout?: any;
   svgCode?: string;
-  config?: any; 
+  /** 部分模型誤用 code 承載 SVG 或 python_script 本體 */
+  code?: string;
+  config?: any;
   prompt?: string;
   cid?: string;
   smiles?: string;
@@ -79,6 +115,27 @@ interface VisualizationItem {
   imageUrl?: string;
   forces?: { name: string; magnitude: number; angle: number }[];
   objectShape?: 'box' | 'circle' | 'dot';
+  /** python_plot：Matplotlib 沙箱（向量 SVG） */
+  func_str?: string;
+  x_range?: [number, number];
+  y_range?: [number, number];
+  plot_mode?: '3d' | '2d';
+  /** 預算好的 SVG（與後端 /api/python-plot 回傳一致） */
+  svg?: string;
+  /** physics_collision */
+  parameters?: CollisionParams;
+  /** physiology_mechanism */
+  category?: string;
+  topic?: string;
+  layers?: PhysiologyLayer[];
+  visual_style?: string;
+  interaction_enabled?: boolean;
+  /** asea_render / chemistry_2d DSL */
+  engine?: string;
+  topic?: string;
+  data?: Record<string, unknown>;
+  styling?: Record<string, unknown>;
+  apply_layout?: boolean;
 }
 
 interface VisualizationPayload {
@@ -99,8 +156,42 @@ const ROOT_VIZ_TYPES = new Set([
   'nanobanan_image',
   'mol3d',
   'svg_diagram',
+  'geometry_json',
   'free_body_diagram',
+  'asea_render',
+  'chemistry_2d',
 ]);
+
+function isGeometryJsonVizRenderable(item: { type?: string; code?: unknown }): boolean {
+  if (item.type !== 'geometry_json') return false;
+  const c = item.code;
+  if (typeof c === 'string' && c.trim().length > 0) return true;
+  if (c && typeof c === 'object' && !Array.isArray(c)) {
+    if (isRegularPolygonSolverPayload(c)) return true;
+    if (
+      typeof (c as GeometryJSON).shape_type === 'string' &&
+      Array.isArray((c as GeometryJSON).vertices)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function visualizationPayloadHasGeometryJson(payload: VisualizationPayload | null | undefined): boolean {
+  return !!payload?.visualizations?.some((v) => v?.type === 'geometry_json');
+}
+
+function isNonSvgGeometryVizType(t: string | undefined): boolean {
+  return t === 'python_script' || t === 'image_description' || t === 'matplotlib';
+}
+
+function shouldStrictInterceptGeometryViz(
+  payload: VisualizationPayload | null | undefined,
+  onRetryExtraction?: (() => void) | undefined,
+): boolean {
+  return typeof onRetryExtraction === 'function' || visualizationPayloadHasGeometryJson(payload);
+}
 
 /**
  * [VizRenderer] 傳入 content 防呆：空值、空物件、無 visualizations（且無其他可渲染根層欄位）→ 不掛載區塊
@@ -114,7 +205,25 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
   if (Object.keys(content).length === 0) return false;
 
   const v = content.visualizations;
-  if (Array.isArray(v) && v.length > 0) return true;
+  if (Array.isArray(v) && v.length > 0) {
+    const anyDisplayable = v.some((item: any) => {
+      if (!item || typeof item !== 'object') return false;
+      if (item.type === 'svg_diagram') {
+        const s =
+          (typeof item.svgCode === 'string' && item.svgCode.trim()) ||
+          (typeof item.code === 'string' && item.code.trim());
+        return !!s;
+      }
+      if (item.type === 'geometry_json') {
+        return isGeometryJsonVizRenderable(item);
+      }
+      if (item.type === 'python_script') {
+        return typeof item.code === 'string' && item.code.trim().length > 0;
+      }
+      return true;
+    });
+    if (anyDisplayable) return true;
+  }
 
   if (Array.isArray(content.compounds) && content.compounds.length > 0) return true;
   if (Array.isArray(compoundsProp) && compoundsProp.length > 0) return true;
@@ -125,35 +234,250 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
   const t = content.type;
   if (typeof t === 'string' && (PLOTLY_TRACE_TYPES.has(t) || ROOT_VIZ_TYPES.has(t))) return true;
 
+  if (content.type === 'geometry_json') {
+    return isGeometryJsonVizRenderable(content);
+  }
+
+  if (content.type === 'python_plot') {
+    const svgPre =
+      (typeof content.svgCode === 'string' && content.svgCode.trim()) ||
+      (typeof content.svg === 'string' && content.svg.trim());
+    const xr = content.x_range;
+    const yr = content.y_range;
+    const hasRanges =
+      Array.isArray(xr) && xr.length === 2 && Array.isArray(yr) && yr.length === 2;
+    const hasFunc = typeof content.func_str === 'string' && content.func_str.trim().length > 0;
+    if (svgPre || (hasFunc && hasRanges)) return true;
+  }
+  if (
+    content.type === 'python_script' &&
+    typeof content.code === 'string' &&
+    content.code.trim().length > 0
+  ) {
+    return true;
+  }
+  if (
+    content.type === 'svg_diagram' &&
+    typeof content.code === 'string' &&
+    content.code.trim().length > 0 &&
+    !((typeof content.svgCode === 'string' && content.svgCode.trim()))
+  ) {
+    return true;
+  }
+  if (
+    content.type === 'physics_collision' &&
+    content.parameters?.ball_A &&
+    content.parameters?.ball_B
+  ) {
+    return true;
+  }
+  if (
+    content.type === 'physiology_mechanism' &&
+    (typeof content.topic === 'string' || (Array.isArray(content.layers) && content.layers.length > 0))
+  ) {
+    return true;
+  }
+  if (
+    content.category === 'Physiology' &&
+    Array.isArray(content.layers) &&
+    content.layers.length > 0
+  ) {
+    return true;
+  }
+
+  if (isAseaRenderVizItem(content)) return true;
+  if (isInclinedPlaneFbdViz(content)) return true;
+  if (
+    content.type === 'chemistry_2d' &&
+    typeof (content as VisualizationItem).data?.molecule_string === 'string' &&
+    String((content as VisualizationItem).data?.molecule_string).trim()
+  ) {
+    return true;
+  }
+
   return false;
 }
 
 /** 解析後仍無任何圖表／化合物可畫（例如 Flash 降級回傳空壳）→ 不渲染區塊 */
 function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, compoundsProp?: Compound[]): boolean {
   const v = data.visualizations;
-  if (Array.isArray(v) && v.length > 0) return true;
+  if (Array.isArray(v) && v.length > 0) {
+    const anyDisplayable = v.some((item: any) => {
+      if (!item || typeof item !== 'object') return false;
+      if (item.type === 'svg_diagram') {
+        const s =
+          (typeof item.svgCode === 'string' && item.svgCode.trim()) ||
+          (typeof item.code === 'string' && item.code.trim());
+        return !!s;
+      }
+      if (item.type === 'geometry_json') {
+        return isGeometryJsonVizRenderable(item);
+      }
+      if (item.type === 'python_script') {
+        return typeof item.code === 'string' && item.code.trim().length > 0;
+      }
+      return true;
+    });
+    if (anyDisplayable) return true;
+  }
   if (Array.isArray(data.compounds) && data.compounds.length > 0) return true;
   if (Array.isArray(compoundsProp) && compoundsProp.length > 0) return true;
   return false;
+}
+
+/** mol3d 區塊僅在具備 PubChem／結構資料時可交給 Viewer3D，避免模型只回 type 與空 x/y 時整段報錯 */
+function mol3dVizHasLoadableStructure(viz: VisualizationItem | null | undefined): boolean {
+  if (!viz) return false;
+  if (viz.cid != null && String(viz.cid).trim() !== '') return true;
+  if (typeof viz.smiles === 'string' && viz.smiles.trim().length > 0) return true;
+  if (typeof viz.pdb === 'string' && viz.pdb.trim().length > 0) return true;
+  if (typeof viz.mol === 'string' && viz.mol.trim().length > 0) return true;
+  return false;
+}
+
+function isParsedPayloadDisplayable(data: VisualizationPayload | null, compoundsProp?: Compound[]): boolean {
+  if (!data) return false;
+  if (isParsedVisualizationPayloadRenderable(data, compoundsProp)) return true;
+  return typeof data.explanation === 'string' && data.explanation.trim().length > 0;
 }
 
 // -------------------------------------------------------------------
 // 繪圖引擎：注入 GeoGebra 風格
 // -------------------------------------------------------------------
 const normalizePlotlyData = (raw: any): any[] | null => {
-  if (!raw) return null;
+  if (raw == null) return null;
   if (Array.isArray(raw) && raw.length > 0) return raw;
-  if (typeof raw === 'object' && Array.isArray(raw.data)) return raw.data;
-  if (typeof raw === 'object' && raw.x && raw.y) return [raw];
+  if (typeof raw === 'object' && Array.isArray(raw.data) && raw.data.length > 0) return raw.data;
+  // 模型常把 traces 放在 data: { data: [...], layout } 雙層物件裡
+  if (
+    typeof raw === 'object' &&
+    raw.data != null &&
+    typeof raw.data === 'object' &&
+    !Array.isArray(raw.data) &&
+    Array.isArray((raw.data as any).data) &&
+    (raw.data as any).data.length > 0
+  ) {
+    return (raw.data as any).data;
+  }
+  if (typeof raw === 'object' && Array.isArray(raw.traces) && raw.traces.length > 0) return raw.traces;
+  if (typeof raw === 'object' && raw.x != null && raw.y != null) return [raw];
   return null;
 };
 
-const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string }> = ({ data, layout, title }) => {
+/** scatter3d 缺 z／長度不符／無任何有限點時 Plotly WebGL 易失敗，繪製前剔除 */
+function filterBrokenScatter3dTraces(traces: any[]): { traces: any[]; droppedBadScatter3d: boolean } {
+  let droppedBadScatter3d = false;
+  const out = traces.filter((t) => {
+    if (t?.type !== 'scatter3d') return true;
+    const { x, y, z } = t;
+    if (!Array.isArray(x) || !Array.isArray(y) || !Array.isArray(z)) {
+      droppedBadScatter3d = true;
+      return false;
+    }
+    const n = Math.min(x.length, y.length, z.length);
+    if (n < 1) {
+      droppedBadScatter3d = true;
+      return false;
+    }
+    let finite = 0;
+    for (let i = 0; i < n; i++) {
+      const a = Number(x[i]);
+      const b = Number(y[i]);
+      const c = Number(z[i]);
+      if (!Number.isNaN(a) && !Number.isNaN(b) && !Number.isNaN(c)) finite++;
+    }
+    if (finite < 1) {
+      droppedBadScatter3d = true;
+      return false;
+    }
+    return true;
+  });
+  return { traces: out, droppedBadScatter3d };
+}
+
+const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?: string; explanation?: string }> = ({
+  data,
+  layout,
+  title,
+  caption,
+  explanation,
+}) => {
   const chartId = useRef(`plotly-${Math.random().toString(36).substr(2, 9)}`);
+  const [plotlyWebGlNote, setPlotlyWebGlNote] = useState<string | null>(null);
 
   useEffect(() => {
-    const traces = normalizePlotlyData(data);
-    if (!traces || traces.length === 0) return;
+    setPlotlyWebGlNote(null);
+    const rawTraces = normalizePlotlyData(data);
+    // #region agent log
+    if (typeof fetch !== 'undefined') {
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
+        body: JSON.stringify({
+          sessionId: 'b584db',
+          location: 'VisualizationRenderer.tsx:PlotlyChart',
+          message: 'plotly normalizePlotlyData',
+          data: {
+            hypothesisId: 'H5',
+            title: title || '',
+            traceCount: rawTraces?.length ?? 0,
+            skippedNewPlot: !rawTraces || rawTraces.length === 0,
+            dataIsArray: Array.isArray(data),
+            rawDataType: data == null ? 'null' : typeof data,
+          },
+          timestamp: Date.now(),
+          runId: 'pre-fix',
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
+    if (!rawTraces || rawTraces.length === 0) return;
+
+    const vizOpts = { title, caption, explanation };
+    const coercePlotlyNum = (v: any) => {
+      if (v === null || v === undefined) return v;
+      if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
+      return v;
+    };
+    const traces = patchPhysics3dTraces(patchStem3dPlotlyTraces(rawTraces, vizOpts), vizOpts);
+    const tracesCoerced = traces.map((t: any) => {
+      if (t?.type === 'scatter' && Array.isArray(t.x) && Array.isArray(t.y)) {
+        return { ...t, x: t.x.map(coercePlotlyNum), y: t.y.map(coercePlotlyNum) };
+      }
+      if (t?.type === 'scatter3d' && Array.isArray(t.x) && Array.isArray(t.y) && Array.isArray(t.z)) {
+        return {
+          ...t,
+          x: t.x.map(coercePlotlyNum),
+          y: t.y.map(coercePlotlyNum),
+          z: t.z.map(coercePlotlyNum),
+        };
+      }
+      return t;
+    });
+
+    const { traces: tracesForPlot, droppedBadScatter3d } = filterBrokenScatter3dTraces(tracesCoerced);
+    if (droppedBadScatter3d) {
+      setPlotlyWebGlNote(
+        '3D 座標資料不完整（例如缺少 z 或 x/y/z 長度不符），已略過無效的 scatter3d。若批改曾改以 Flash 模型，視覺化可能較不完整，可再試一次批改。',
+      );
+      // #region agent log
+      if (typeof fetch !== 'undefined') {
+        fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
+          body: JSON.stringify({
+            sessionId: 'b584db',
+            location: 'VisualizationRenderer.tsx:PlotlyChart:dropScatter3d',
+            message: 'filtered invalid scatter3d',
+            data: { hypothesisId: 'H4', title: title || '' },
+            timestamp: Date.now(),
+            runId: 'pre-fix',
+          }),
+        }).catch(() => {});
+      }
+      // #endregion
+    }
+    if (!tracesForPlot || tracesForPlot.length === 0) return;
 
     const isDark = document.documentElement.classList.contains('dark');
     
@@ -219,7 +543,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string }> = ({ da
       return true;
     };
 
-    const enhancedData = traces.map((trace: any, index: number) => {
+    const enhancedData = tracesForPlot.map((trace: any, index: number) => {
         const newTrace = { ...trace };
         const defaultColor = geoGebraColors[index % geoGebraColors.length];
 
@@ -227,25 +551,31 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string }> = ({ da
         if (newTrace.type === 'scatter') {
             // 線條渲染邏輯
             if (!newTrace.mode || newTrace.mode.includes('lines')) {
-                if (Array.isArray(newTrace.x) && Array.isArray(newTrace.y) && newTrace.x.length > 2) {
+                const xLength = Array.isArray(newTrace.x) ? newTrace.x.length : 0;
+                const yLength = Array.isArray(newTrace.y) ? newTrace.y.length : 0;
+                if (xLength > 2 && yLength > 2) {
+                    const lineBase =
+                        newTrace.line != null && typeof newTrace.line === 'object' ? newTrace.line : {};
                     if (shouldSmoothTrace(newTrace.x, newTrace.y)) {
                         // ✅ 函數曲線：自適應細分 + Plotly spline
                         const smoothed = adaptiveSmoothTrace(newTrace.x, newTrace.y);
                         newTrace.x = smoothed.x;
                         newTrace.y = smoothed.y;
-                        newTrace.line = { ...newTrace.line, shape: 'spline', smoothing: 1 };
+                        newTrace.line = { ...lineBase, shape: 'spline', smoothing: 1 };
                     } else {
                         // ✅ 幾何多邊形：保持銳利直線
-                        newTrace.line = { ...newTrace.line, shape: 'linear' };
+                        newTrace.line = { ...lineBase, shape: 'linear' };
                     }
                 }
 
                 // 線條加粗
+                const lineMergeBase =
+                    newTrace.line != null && typeof newTrace.line === 'object' ? newTrace.line : {};
                 newTrace.line = {
                     width: 3, // GeoGebra 風格的粗實線
                     color: trace.line?.color || defaultColor,
                     ...trace.line,
-                    ...newTrace.line
+                    ...lineMergeBase
                 };
             }
             // 標記點放大並加上白框 (更精緻的幾何點)
@@ -317,6 +647,52 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string }> = ({ da
         mergedLayout.xaxis = { ...mergedLayout.xaxis, ...layout.xaxis };
     }
 
+    const ctxStr = [title, caption, explanation].filter(Boolean).join(' ');
+    const titrationPhChart =
+      /滴定|titration/i.test(ctxStr) &&
+      (/p\s*h|酸鹼|磷酸|氫氧化|當量|equivalence|緩衝|buffer/i.test(ctxStr) ||
+        /naoh|h\s*3\s*p\s*o\s*4|h3po4/i.test(ctxStr.replace(/\s/g, '')));
+    if (titrationPhChart && !mergedLayout.scene) {
+      mergedLayout.yaxis = {
+        ...(mergedLayout.yaxis || {}),
+        range: [0, 14],
+        autorange: false,
+      };
+    }
+
+    // #region agent log
+    if (typeof fetch !== 'undefined') {
+      const t0 = tracesForPlot[0];
+      const ys = t0?.y;
+      const yArr = Array.isArray(ys) ? ys.map(Number).filter((n) => !Number.isNaN(n)) : [];
+      const zs = t0?.z;
+      const zArr = Array.isArray(zs) ? zs.map(Number).filter((n) => !Number.isNaN(n)) : [];
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
+        body: JSON.stringify({
+          sessionId: 'b584db',
+          location: 'VisualizationRenderer.tsx:PlotlyChart:preNewPlot',
+          message: 'plotly first trace stats',
+          data: {
+            hypothesisId: 'H4',
+            firstType: t0?.type,
+            yLen: Array.isArray(ys) ? ys.length : 0,
+            yMin: yArr.length ? Math.min(...yArr) : null,
+            yMax: yArr.length ? Math.max(...yArr) : null,
+            zLen: Array.isArray(zs) ? zs.length : 0,
+            zMin: zArr.length ? Math.min(...zArr) : null,
+            zMax: zArr.length ? Math.max(...zArr) : null,
+            yaxisRange: mergedLayout?.yaxis?.range,
+            hasScene: !!mergedLayout?.scene,
+          },
+          timestamp: Date.now(),
+          runId: 'pre-fix',
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
+
     const config = { 
         responsive: true, 
         displayModeBar: true, // 允許使用者縮放平移
@@ -328,16 +704,63 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string }> = ({ da
         Plotly.newPlot(chartId.current, enhancedData, mergedLayout, config);
     } catch (e) {
         console.error("Plotly Render Error:", e);
+        // #region agent log
+        if (typeof fetch !== 'undefined') {
+          fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
+            body: JSON.stringify({
+              sessionId: 'b584db',
+              location: 'VisualizationRenderer.tsx:PlotlyChart:newPlotError',
+              message: String(e instanceof Error ? e.message : e),
+              data: { hypothesisId: 'H4', title: title || '' },
+              timestamp: Date.now(),
+              runId: 'pre-fix',
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
     }
 
+    const el = document.getElementById(chartId.current);
+    const relayout = () => {
+      try {
+        if (el) Plotly.Plots.resize(el);
+      } catch {
+        /* ignore */
+      }
+    };
+    const ro =
+      el &&
+      new ResizeObserver(() => {
+        requestAnimationFrame(relayout);
+      });
+    if (el && ro) ro.observe(el);
+    window.addEventListener('resize', relayout);
+
     return () => {
+      window.removeEventListener('resize', relayout);
+      ro?.disconnect();
       try {
         Plotly.purge(chartId.current);
-      } catch (e) { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
-  }, [data, layout, title]);
+  }, [data, layout, title, caption, explanation]);
 
-  return <div id={chartId.current} className="w-full h-full rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800" style={{ minHeight: '350px' }} />;
+  return (
+    <div className="w-full space-y-1">
+      <div
+        id={chartId.current}
+        data-asea-will-read-frequently
+        className="w-full h-full min-h-[300px] sm:min-h-[360px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-[var(--bg-main)] shadow-inner"
+      />
+      {plotlyWebGlNote ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300 px-1">{plotlyWebGlNote}</p>
+      ) : null}
+    </div>
+  );
 };
 
 // 透過 SVGR，我們將具有 ID Tags 的 SVG 當作一個 React Component 引入
@@ -420,9 +843,53 @@ export const InteractiveAnatomyViewer: React.FC<{ vizData: any }> = ({ vizData }
   );
 };
 
-export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compound[] }> = ({ content, compounds: compoundsProp }) => {
+function parseGeometryJsonFromViz(
+  code: unknown,
+  prefetched: GeometryJSON | null | undefined
+): GeometryJSON | null {
+  try {
+    if (code && typeof code === 'object' && !Array.isArray(code)) {
+      const o = code as Record<string, unknown>;
+      if (isRegularPolygonSolverPayload(o)) {
+        return solverModePayloadToGeometryJSON(o);
+      }
+      if (typeof (code as GeometryJSON).shape_type === 'string') {
+        return code as GeometryJSON;
+      }
+    }
+    if (typeof code === 'string' && code.trim()) {
+      const cleaned = code
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const parsed = JSON.parse(cleaned) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const o = parsed as Record<string, unknown>;
+        if (isRegularPolygonSolverPayload(o)) {
+          return solverModePayloadToGeometryJSON(o);
+        }
+      }
+      return parsed as GeometryJSON;
+    }
+  } catch {
+    /* fall through */
+  }
+  return prefetched ?? null;
+}
+
+export const VisualizationRenderer: React.FC<{
+  content: any;
+  compounds?: Compound[];
+  /** 題目圖預先萃取的幾何 JSON；模型 output 缺漏或解析失敗時作為後備 */
+  prefetchedGeometryJson?: GeometryJSON | null;
+  /** 與幾何預抓並用：嚴格模式下攔截 python_script 等並供使用者觸發重新萃取 */
+  onRetryExtraction?: () => void;
+}> = ({ content, compounds: compoundsProp, prefetchedGeometryJson, onRetryExtraction }) => {
   const [parsedData, setParsedData] = useState<VisualizationPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const vizPayload = parsedData;
 
   useEffect(() => {
     if (!isVizRendererContentRenderable(content, compoundsProp)) {
@@ -489,6 +956,32 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
     }
 
     if (parsed) {
+       // 生理機制：根層 JSON（category + layers）→ 單一 physiology_mechanism 視覺化
+       if (
+         parsed.category === 'Physiology' &&
+         Array.isArray(parsed.layers) &&
+         parsed.layers.length > 0 &&
+         (!parsed.visualizations || parsed.visualizations.length === 0)
+       ) {
+         setParsedData({
+           explanation: parsed.explanation,
+           visualizations: [
+             {
+               type: 'physiology_mechanism',
+               category: parsed.category,
+               topic: parsed.topic || parsed.title || 'Physiology',
+               layers: parsed.layers,
+               visual_style: parsed.visual_style,
+               interaction_enabled: parsed.interaction_enabled,
+               title: parsed.title,
+               caption: parsed.caption,
+             },
+           ],
+           compounds: parsed.compounds,
+         });
+         return;
+       }
+
        // ✅ Fix: AI 有時回傳 Plotly trace 的 type（如 "scatter"）而非 "plotly_chart"
        if (
          parsed.type &&
@@ -515,11 +1008,39 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
        // ✅ Fix: visualization_code 裡的 visualizations 陣列中的 trace 也要處理
        if (parsed.visualizations && Array.isArray(parsed.visualizations)) {
          parsed.visualizations = parsed.visualizations.map((viz: any) => {
-           // mol3d 在 schema 下可能帶有空的 x/y 陣列，不可當 Plotly trace 轉換
-           if (viz.type === 'mol3d' || viz.cid != null || viz.smiles) {
+           // 先辨識 Plotly trace：模型常在同一物件上誤帶 schema 的 cid，物理 3D 圖會因此被當成 mol3d 而無法繪製
+           if (viz.type === 'mol3d') {
              return viz;
            }
-           if (viz.type && PLOTLY_TRACE_TYPES.has(viz.type) && (viz.x || viz.y || viz.z)) {
+           if (viz.type === 'geometry_json') {
+             return viz;
+           }
+           const hasPlotlyTraceShape =
+             viz.type &&
+             PLOTLY_TRACE_TYPES.has(viz.type) &&
+             (viz.x != null || viz.y != null || viz.z != null);
+           if (hasPlotlyTraceShape) {
+             // #region agent log
+             if (typeof fetch !== 'undefined' && (viz.cid != null || viz.smiles)) {
+               fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
+                 body: JSON.stringify({
+                   sessionId: 'b584db',
+                   location: 'VisualizationRenderer.tsx:vizNormalize',
+                   message: 'plotly trace precedence over cid/smiles',
+                   data: {
+                     hypothesisId: 'H_phys',
+                     traceType: viz.type,
+                     hadCid: viz.cid != null,
+                     hadSmiles: !!viz.smiles,
+                   },
+                   timestamp: Date.now(),
+                   runId: 'pre-fix',
+                 }),
+               }).catch(() => {});
+             }
+             // #endregion
              return {
                type: 'plotly_chart',
                title: viz.title || viz.name || 'Chart',
@@ -528,20 +1049,51 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
                layout: viz.layout,
              };
            }
+           const looksMol3d =
+             (viz.cid != null && String(viz.cid).trim() !== '') ||
+             (typeof viz.smiles === 'string' && viz.smiles.trim().length > 0) ||
+             (typeof viz.pdb === 'string' && viz.pdb.trim().length > 0) ||
+             (typeof viz.mol === 'string' && viz.mol.trim().length > 0);
+           if (looksMol3d) {
+             return viz;
+           }
+           if (
+             viz.type === 'svg_diagram' &&
+             !(typeof viz.svgCode === 'string' && viz.svgCode.trim()) &&
+             typeof viz.code === 'string' &&
+             viz.code.trim()
+           ) {
+             return { ...viz, svgCode: viz.code };
+           }
            return viz;
          });
        }
 
        // Normalize single visualization items to array format
-       if (parsed.type === 'visualization' || parsed.chartType || parsed.type === 'plotly_chart' || parsed.type === 'recharts_plot' || parsed.type === 'nanobanan_image' || parsed.type === 'mol3d' || parsed.type === 'free_body_diagram' || parsed.cid || parsed.smiles) {
+       if (parsed.type === 'visualization' || parsed.chartType || parsed.type === 'plotly_chart' || parsed.type === 'recharts_plot' || parsed.type === 'nanobanan_image' || parsed.type === 'mol3d' || parsed.type === 'geometry_json' || parsed.type === 'free_body_diagram' || parsed.type === 'python_plot' || parsed.type === 'python_script' || parsed.type === 'physics_collision' || parsed.type === 'physiology_mechanism' || parsed.type === 'asea_render' || parsed.type === 'chemistry_2d' || parsed.cid || parsed.smiles) {
            // Direct visualization object detected
            const type = parsed.type === 'plotly_chart' ? 'plotly_chart' : 
                         parsed.type === 'svg_diagram' ? 'svg_diagram' : 
+                        parsed.type === 'geometry_json' ? 'geometry_json' :
                         parsed.type === 'nanobanan_image' ? 'nanobanan_image' : 
                         parsed.type === 'free_body_diagram' ? 'free_body_diagram' :
+                        parsed.type === 'python_plot' ? 'python_plot' :
+                        parsed.type === 'python_script' ? 'python_script' :
+                        parsed.type === 'physics_collision' ? 'physics_collision' :
+                        parsed.type === 'physiology_mechanism' ? 'physiology_mechanism' :
+                        parsed.type === 'asea_render' ? 'asea_render' :
+                        parsed.type === 'chemistry_2d' ? 'chemistry_2d' :
                         (parsed.type === 'mol3d' || parsed.cid || parsed.smiles) ? 'mol3d' : 'recharts_plot';
            
            let vizItem: any = { ...parsed, type };
+           if (
+             type === 'svg_diagram' &&
+             !(typeof vizItem.svgCode === 'string' && vizItem.svgCode.trim()) &&
+             typeof vizItem.code === 'string' &&
+             vizItem.code.trim()
+           ) {
+             vizItem = { ...vizItem, svgCode: vizItem.code };
+           }
            // plotly_chart: 解開巢狀 { data: [...], layout: {...} }
            if (type === 'plotly_chart') {
              const raw = vizItem.data || parsed.data;
@@ -557,12 +1109,32 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
                visualizations: [vizItem],
                compounds: parsed.compounds
            });
-       } else if (parsed.svgCode) {
-           // Fallback if AI forgets the 'visualizations' array but provides svgCode
+       } else if (
+           parsed.type !== 'geometry_json' &&
+           (
+             (typeof parsed.svgCode === 'string' && parsed.svgCode.trim()) ||
+             (typeof parsed.code === 'string' &&
+               parsed.code.trim() &&
+               (parsed.type === 'svg_diagram' ||
+                 (parsed.code.includes('<svg') && !parsed.code.trim().startsWith('{'))))
+           )
+         ) {
+           // Fallback if AI forgets the 'visualizations' array but provides svgCode (or code as SVG markup)
+           const svgRaw =
+             (typeof parsed.svgCode === 'string' && parsed.svgCode.trim()) ||
+             (typeof parsed.code === 'string' ? parsed.code.trim() : '');
            setParsedData({
                explanation: parsed.explanation,
-               visualizations: [{ type: 'svg_diagram', svgCode: parsed.svgCode, title: parsed.title || 'Diagram' }],
+               visualizations: [{ type: 'svg_diagram', svgCode: svgRaw, title: parsed.title || 'Diagram' }],
                compounds: parsed.compounds
+           });
+       } else if (parsed.type === 'python_script' && typeof parsed.code === 'string' && parsed.code.trim()) {
+           setParsedData({
+             explanation: parsed.explanation,
+             visualizations: [
+               { type: 'python_script', code: parsed.code.trim(), title: parsed.title || 'Python script' },
+             ],
+             compounds: parsed.compounds,
            });
        } else {
            setParsedData(parsed);
@@ -583,35 +1155,45 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
       );
   }
   
-  if (!parsedData) return null;
+  if (!parsedData || !vizPayload) return null;
 
-  if (!isParsedVisualizationPayloadRenderable(parsedData, compoundsProp)) {
+  if (!isParsedPayloadDisplayable(vizPayload, compoundsProp)) {
     return null;
   }
 
   return (
     <div className="space-y-6 mt-6 animate-in fade-in slide-in-from-bottom-2 duration-700">
-      {parsedData.explanation && (
-        <div className="bg-indigo-500/5 border-l-2 border-indigo-500 pl-4 py-2">
-           <h5 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Visual Reasoning</h5>
-           <div className="text-zinc-300 text-sm leading-relaxed whitespace-pre-wrap font-medium">
-             <SmartChart data={{ type: 'text_only', chartType: 'line', title: '', data: [], explanation: parsedData.explanation }} renderExplanationOnly={true} />
+      {vizPayload.explanation && (
+        <div className="rounded-xl bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 pl-4 pr-3 py-3">
+           <h5 className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-1">Visual Reasoning</h5>
+           <div className="text-[var(--text-primary)] text-sm leading-relaxed whitespace-pre-wrap font-medium">
+             <SmartChart data={{ type: 'text_only', chartType: 'line', title: '', data: [], explanation: vizPayload.explanation }} renderExplanationOnly={true} />
            </div>
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-8">
-        {parsedData.visualizations?.map((viz, idx) => {
+        {vizPayload.visualizations?.map((viz, idx) => {
           if (!viz) return null;
           try {
             if (viz.type === 'plotly_chart') {
               return (
-                <div key={idx} className="bg-white dark:bg-zinc-950/40 p-4 rounded-[1.5rem] border border-zinc-200 dark:border-zinc-800 shadow-xl overflow-hidden group">
-                    <div className="mb-2 flex justify-between items-center px-2">
-                       <h5 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>{viz.title || 'Mathematical Model'}</h5>
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                    <div className="mb-3 flex justify-between items-center px-1">
+                       <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>{viz.title || 'Mathematical Model'}</h5>
                     </div>
-                    <PlotlyChart data={viz.data} layout={viz.layout} title={viz.title} />
-                    {viz.caption && <div className="mt-3 px-4 py-2 bg-zinc-50 dark:bg-zinc-900 rounded-lg"><p className="text-zinc-500 text-xs text-center font-serif italic">{viz.caption}</p></div>}
+                    <PlotlyChart
+                      data={viz.data}
+                      layout={viz.layout}
+                      title={viz.title}
+                      caption={viz.caption}
+                      explanation={vizPayload.explanation}
+                    />
+                    {viz.caption && (
+                      <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                        <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                      </div>
+                    )}
                 </div>
               );
             }
@@ -627,33 +1209,320 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
                   config: viz.config
               }} />;
             } 
-            if (viz.type === 'svg_diagram' && viz.svgCode) {
+            if (viz.type === 'svg_diagram') {
+              const svgMarkup =
+                (typeof viz.svgCode === 'string' && viz.svgCode.trim()) ||
+                (typeof viz.code === 'string' && viz.code.trim()) ||
+                '';
+              if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-white dark:bg-gray-800 p-4 rounded-[1.5rem] border border-zinc-200 shadow-xl overflow-hidden group">
-                  <div className="mb-2 flex justify-between items-center px-2">
-                       <h5 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                       <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
                   </div>
-                  <div className="flex justify-center bg-white dark:bg-gray-800 rounded-xl overflow-x-auto max-w-full relative" style={{ minHeight: '200px' }}><PhysicsRenderer svgCode={viz.svgCode} className="svg-content" /></div>
-                  {viz.caption && <div className="mt-3 px-4 py-2 bg-zinc-50 rounded-lg"><p className="text-zinc-500 text-xs text-center font-serif italic">{viz.caption}</p></div>}
+                  <div
+                    className="flex min-h-[240px] w-full items-stretch justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60"
+                    style={{ minHeight: '200px' }}
+                  >
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full flex-1 min-h-[200px]" />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
                 </div>
               );
             }
-            if (viz.type === 'mol3d' || viz.cid || viz.smiles) {
+            if (
+              shouldStrictInterceptGeometryViz(vizPayload, onRetryExtraction) &&
+              isNonSvgGeometryVizType(viz.type)
+            ) {
+              console.warn(`[VisualizationRenderer] 攔截到非 SVG 幾何輸出: ${viz.type}`);
               return (
-                <div key={idx} className="bg-white dark:bg-zinc-950/40 p-4 rounded-[1.5rem] border border-zinc-200 dark:border-zinc-800 shadow-xl overflow-hidden group">
-                    <div className="mb-2 flex justify-between items-center px-2">
-                       <h5 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{viz.title || '3D Molecular Model'}</h5>
-                    </div>
-                    <Viewer3D cid={viz.cid} smiles={viz.smiles} pdb={viz.pdb} mol={viz.mol} />
-                    {viz.caption && <div className="mt-3 px-4 py-2 bg-zinc-50 dark:bg-zinc-900 rounded-lg"><p className="text-zinc-500 text-xs text-center font-serif italic">{viz.caption}</p></div>}
+                <div
+                  key={idx}
+                  className={`text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800 rounded p-2 ${
+                    typeof onRetryExtraction === 'function' ? 'cursor-pointer' : ''
+                  }`}
+                  onClick={() => {
+                    if (typeof onRetryExtraction === 'function') {
+                      onRetryExtraction();
+                    }
+                  }}
+                >
+                  幾何圖形正在重新計算...（點擊重試）
                 </div>
               );
+            }
+            if (viz.type === 'geometry_json') {
+              let svgMarkup = '';
+              try {
+                const geoData = parseGeometryJsonFromViz(viz.code, prefetchedGeometryJson);
+                if (geoData) {
+                  if (!geoData.mid_level || !geoData.high_level) {
+                    console.warn(
+                      '[VisualizationRenderer] geometry_json 缺少三層特徵，使用 v2 降級路徑'
+                    );
+                  }
+                  svgMarkup = geometryJsonToSvg(geoData);
+                }
+              } catch (e) {
+                console.error('[VisualizationRenderer] geometry_json parse error:', e);
+                if (prefetchedGeometryJson) {
+                  try {
+                    svgMarkup = geometryJsonToSvg(prefetchedGeometryJson);
+                  } catch {
+                    svgMarkup = '';
+                  }
+                }
+              }
+              if (!svgMarkup) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                      {viz.title || 'Diagram'}
+                    </h5>
+                  </div>
+                  <div
+                    className="flex min-h-[240px] w-full items-stretch justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60"
+                    style={{ minHeight: '200px' }}
+                  >
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full flex-1 min-h-[200px]" />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            {
+              const isPlotlyTraceType =
+                typeof viz.type === 'string' && PLOTLY_TRACE_TYPES.has(viz.type);
+              const showMol3d =
+                !isPlotlyTraceType &&
+                viz.type !== 'plotly_chart' &&
+                (viz.type === 'mol3d' || mol3dVizHasLoadableStructure(viz));
+              if (showMol3d) {
+                if (!mol3dVizHasLoadableStructure(viz)) {
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200/90"
+                    >
+                      此題標示為 3D 分子模型，但回傳資料缺少 PubChem CID、SMILES、PDB 或 MOL，無法載入結構。若同欄另有曲線圖，請見下方圖表。
+                    </div>
+                  );
+                }
+                return (
+                  <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                      <div className="mb-3 flex justify-between items-center px-1">
+                         <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{viz.title || '3D Molecular Model'}</h5>
+                      </div>
+                      <div className="rounded-xl overflow-hidden border border-[var(--border-color)]/60 bg-[var(--bg-main)]">
+                        <Viewer3D cid={viz.cid} smiles={viz.smiles} pdb={viz.pdb} mol={viz.mol} />
+                      </div>
+                      {viz.caption && (
+                        <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                          <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                        </div>
+                      )}
+                  </div>
+                );
+              }
             }
             if (viz.type === 'nanobanan_image' && viz.prompt) {
               return <InteractiveAnatomyViewer key={idx} vizData={viz} />;
             }
+            if (viz.type === 'free_body_diagram' && isInclinedPlaneFbdViz(viz)) {
+              return (
+                <div
+                  key={idx}
+                  className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden"
+                >
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                      {viz.title || '斜面受力分析（約束繪製）'}
+                    </h5>
+                  </div>
+                  <InclinedPlaneFbd payload={parseInclinedPlanePayload(viz)} />
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">
+                        {viz.caption}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
             if (viz.type === 'free_body_diagram' && viz.forces) {
                return <FreeBodyDiagram key={idx} forces={viz.forces} objectShape={viz.objectShape} />;
+            }
+            if (viz.type === 'asea_render' && isAseaRenderVizItem(viz)) {
+              return (
+                <AseaRenderBlock
+                  key={idx}
+                  engine={viz.engine}
+                  topic={viz.topic}
+                  data={viz.data as Record<string, unknown>}
+                  styling={viz.styling}
+                  apply_layout={viz.apply_layout}
+                  title={viz.title}
+                  caption={viz.caption}
+                  svgCode={viz.svgCode}
+                />
+              );
+            }
+            if (
+              viz.type === 'chemistry_2d' &&
+              viz.data &&
+              typeof viz.data.molecule_string === 'string' &&
+              viz.data.molecule_string.trim()
+            ) {
+              return (
+                <AseaRenderBlock
+                  key={idx}
+                  engine="chemistry"
+                  topic="molecular_structure"
+                  data={viz.data as Record<string, unknown>}
+                  styling={viz.styling}
+                  apply_layout={viz.apply_layout}
+                  title={viz.title || '2D 分子結構'}
+                  caption={viz.caption}
+                  svgCode={viz.svgCode}
+                />
+              );
+            }
+            if (viz.type === 'python_script' && typeof viz.code === 'string' && viz.code.trim()) {
+              return (
+                <div
+                  key={idx}
+                  className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors"
+                >
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                      {viz.title || 'Python script'}
+                    </h5>
+                  </div>
+                  <p className="mb-2 px-1 text-xs text-[var(--text-secondary)] leading-relaxed">
+                    幾何渲染代碼（僅供檢視，不在瀏覽器執行）
+                  </p>
+                  <pre className="max-h-[min(70vh,520px)] overflow-auto rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4 text-left">
+                    <code className="whitespace-pre font-mono text-[11px] leading-relaxed text-[var(--text-primary)]">
+                      {viz.code.trim()}
+                    </code>
+                  </pre>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">
+                        {viz.caption}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'python_plot') {
+              const pp = normalizePythonPlotViz(viz as Record<string, unknown>);
+              // #region agent log
+              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e80fda' },
+                body: JSON.stringify({
+                  sessionId: 'e80fda',
+                  runId: 'post-fix',
+                  hypothesisId: 'H-python-plot',
+                  location: 'VisualizationRenderer.tsx:python_plot',
+                  message: 'python_plot normalized snapshot',
+                  data: {
+                    rawKeys: Object.keys(viz || {}),
+                    hasRawFuncStr: !!(viz as { func_str?: string }).func_str?.trim(),
+                    hasRawCode: !!(viz as { code?: string }).code?.trim(),
+                    normHasFunc: !!pp.func_str,
+                    normXR: pp.x_range ?? null,
+                    normYR: pp.y_range ?? null,
+                    hasSvg: !!pp.svgCode,
+                  },
+                  timestamp: Date.now(),
+                }),
+              }).catch(() => {});
+              // #endregion
+              return (
+                <PythonFunctionPlotBlock
+                  key={idx}
+                  title={viz.title}
+                  caption={viz.caption}
+                  svgCode={pp.svgCode}
+                  func_str={pp.func_str}
+                  x_range={pp.x_range}
+                  y_range={pp.y_range}
+                  mode={pp.plot_mode === '2d' ? '2d' : '3d'}
+                />
+              );
+            }
+            if (viz.type === 'physics_collision' && viz.parameters?.ball_A && viz.parameters?.ball_B) {
+              return (
+                <div
+                  key={idx}
+                  className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden"
+                >
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                      {viz.title || '碰撞示意（SVG）'}
+                    </h5>
+                  </div>
+                  <CollisionDiagram params={viz.parameters} />
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">
+                        {viz.caption}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (
+              viz.type === 'physiology_mechanism' &&
+              (viz.topic || (Array.isArray(viz.layers) && viz.layers.length > 0))
+            ) {
+              return (
+                <div
+                  key={idx}
+                  className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden"
+                >
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                      {viz.title || '生理機制'}
+                    </h5>
+                  </div>
+                  <PhysiologyMechanismDiagram
+                    viz={{
+                      category: viz.category,
+                      topic: viz.topic || 'Mechanism',
+                      layers: viz.layers || [],
+                      visual_style: viz.visual_style,
+                      interaction_enabled: viz.interaction_enabled,
+                    }}
+                  />
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">
+                        {viz.caption}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
             }
             return null;
           } catch (error) {
@@ -664,8 +1533,8 @@ export const VisualizationRenderer: React.FC<{ content: any; compounds?: Compoun
       </div>
 
       {/* 化學科專用：批改完後顯示化合物結構式與 3D 模型 */}
-      {(parsedData.compounds ?? compoundsProp) && (parsedData.compounds ?? compoundsProp)!.length > 0 && (
-        <ChemCompoundViewer compounds={parsedData.compounds ?? compoundsProp!} />
+      {(vizPayload.compounds ?? compoundsProp) && (vizPayload.compounds ?? compoundsProp)!.length > 0 && (
+        <ChemCompoundViewer compounds={vizPayload.compounds ?? compoundsProp!} />
       )}
     </div>
   );

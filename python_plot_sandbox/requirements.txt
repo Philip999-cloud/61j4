@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+sympy>=1.13.0
+lxml>=5.0.0
+# 化學 2D 引擎需另行安裝 RDKit，例如：conda install -c conda-forge rdkit
+# 或 pip install rdkit-pypi（視平台與 Python 版本而定）

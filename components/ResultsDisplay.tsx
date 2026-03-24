@@ -15,9 +15,15 @@ import { Viewer3D } from './Viewer3D';
 import { MasterpieceCard, ParagraphCard, PolishedSentenceCard, StructureCard } from './chinese/PolishedSentenceCard';
 import { InteractiveChineseArticle } from './chinese/InteractiveChineseArticle';
 import { InteractiveArticle } from './common/InteractiveArticle';
+import type { GeometryJSON } from '@/src/types/geometry';
+import { getStemSubAchievedPoints } from '../utils/mathScoringUtils';
 
 interface Props {
   results: GradingResults | ChineseWritingResults;
+  /** 題目圖預萃取幾何（數學／物理），供 VisualizationRenderer 後備 */
+  prefetchedQuestionGeometry?: GeometryJSON | null;
+  /** 重新呼叫 /api/extract-geometry（第一張題目圖） */
+  onRetryQuestionGeometryExtraction?: () => void;
 }
 
 const TextWithChemistry: React.FC<{ content: string; className?: string; isInline?: boolean }> = ({ content, className, isInline }) => {
@@ -336,7 +342,11 @@ const ChineseResultsDisplay: React.FC<{ results: ChineseWritingResults }> = ({ r
   );
 };
 
-const ResultsDisplay: React.FC<Props> = ({ results }) => {
+const ResultsDisplay: React.FC<Props> = ({
+  results,
+  prefetchedQuestionGeometry,
+  onRetryQuestionGeometryExtraction,
+}) => {
   const { toggleFavorite, isFavorited } = useFavorites();
 
   if ('sections' in results) {
@@ -352,11 +362,10 @@ const ResultsDisplay: React.FC<Props> = ({ results }) => {
   let calculatedMaxScore = 0;
 
   if (phase3?.stem_sub_results && phase3.stem_sub_results.length > 0) {
-      totalScore = phase3.stem_sub_results.reduce((acc, sub) => {
-          const rawSubTotal = (Number(sub.setup) || 0) + (Number(sub.process) || 0) + (Number(sub.result) || 0) + (Number(sub.logic) || 0);
-          const subMax = Number(sub.max_points) || 0;
-          return acc + (subMax > 0 ? Math.min(rawSubTotal, subMax) : rawSubTotal);
-      }, 0);
+      totalScore = phase3.stem_sub_results.reduce(
+        (acc, sub) => acc + getStemSubAchievedPoints(sub, subjectName),
+        0
+      );
       calculatedMaxScore = phase3.stem_sub_results.reduce((acc, sub) => acc + (Number(sub.max_points) || 0), 0);
   } else if (totalScore === undefined || totalScore === null) {
       totalScore = phase3?.ceec_results?.total_score || 0;
@@ -578,6 +587,8 @@ const ResultsDisplay: React.FC<Props> = ({ results }) => {
             subjectName={subjectName} 
             originalText={results.originalContent}
             isSolutionOnly={isSolutionOnly}
+            prefetchedQuestionGeometry={prefetchedQuestionGeometry}
+            onRetryQuestionGeometryExtraction={onRetryQuestionGeometryExtraction}
           />
           
           {/* Added Science Detailed Fields — 同 project-2 */}

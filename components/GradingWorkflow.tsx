@@ -1,4 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useGeometryExtraction } from '@/src/hooks/useGeometryExtraction';
+import type { GeometryJSON } from '@/src/types/geometry';
+import { tryNumericConstraintsFromQuestionStem } from '@/src/utils/questionNumericConstraints';
 import { Subject, QuestionSet, ActivityType } from '../types';
 import { useGrading } from '../hooks/useGrading';
 import { useAppContext } from '@/contexts/AppContext';
@@ -11,6 +14,8 @@ import GradingLoadingState from './common/GradingLoadingState';
 import { driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import { startSubjectTour } from '../utils/tourConfig';
+import LatexRenderer from './LatexRenderer';
+import { enhanceTranscriptionMathForLatex } from '../utils/stemTranscriptionMath';
 
 interface Props {
   subject: string; // The ID of the subject
@@ -33,6 +38,14 @@ const getSubjectById = (id: string): Subject | undefined => {
   ];
   return [...gsatSubjects, ...astSubjects].find(s => s.id === id);
 };
+
+/** 題目圖幾何預萃取（與 geminiService MATH_VISION_PHASE3 無需完全一致；化學 Phase3 仍送圖但不跑幾何） */
+const GEOMETRY_PREFETCH_SUBJECT_IDS = new Set([
+  'ast-math-a',
+  'gsat-math-a',
+  'gsat-math-b',
+  'ast-physics',
+]);
 
 const Step: React.FC<{ 
   title: string; 
@@ -101,7 +114,9 @@ const DraftEditor: React.FC<{
   title: string;
   initialText: string;
   onSave: (text: string) => void;
-}> = ({ title, initialText, onSave }) => {
+  /** STEM 一般科目：預覽辨識結果時以 KaTeX 渲染算式 */
+  latexPreview?: boolean;
+}> = ({ title, initialText, onSave, latexPreview = false }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [text, setText] = useState(initialText);
 
@@ -138,7 +153,16 @@ const DraftEditor: React.FC<{
         </button>
       </div>
       <div className="text-sm text-slate-800 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed selection:bg-yellow-200 selection:text-black dark:selection:bg-yellow-500/40 dark:selection:text-yellow-100">
-        {initialText}
+        {latexPreview && initialText.trim().length > 0 ? (
+          <div className="max-h-72 overflow-x-auto overflow-y-auto rounded-lg border border-[var(--border-color)] bg-[var(--bg-card)] p-3 text-[var(--text-primary)] [&_.katex-display]:my-2 [&_.katex]:text-[0.98em]">
+            <LatexRenderer
+              content={enhanceTranscriptionMathForLatex(initialText)}
+              className="text-sm md:text-[15px] leading-relaxed"
+            />
+          </div>
+        ) : (
+          initialText
+        )}
       </div>
     </div>
   );
@@ -161,15 +185,80 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [studentImages, setStudentImages] = useState<string[]>([]);
   const [inputText, setInputText] = useState('');
+  const [standardDraft, setStandardDraft] = useState<{
+    qText: string;
+    rText: string;
+    sText: string;
+  } | null>(null);
   const [answerMode, setAnswerMode] = useState<'image' | 'text'>('image');
   const [gradingModel, setGradingModel] = useState<GradingModel>('standard');
 
+  const { extract: extractQuestionGeometry } = useGeometryExtraction();
+  const [prefetchedQuestionGeometry, setPrefetchedQuestionGeometry] = useState<GeometryJSON | null>(null);
+
+  const fetchGeometryFromFirstQuestionImage = useCallback(async (): Promise<GeometryJSON | null> => {
+    if (!subject || !GEOMETRY_PREFETCH_SUBJECT_IDS.has(subject.id)) return null;
+    const first = questionImages[0];
+    if (!first || !String(first).trim()) return null;
+    const dataUrl = String(first);
+    const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    const raw =
+      m && m[2]
+        ? m[2]
+        : (dataUrl.includes(',') ? dataUrl.split(',').slice(1).join(',') : dataUrl).trim();
+    const mime = m && m[1] ? m[1] : 'image/png';
+    const stem = [inputText, standardDraft?.qText].filter(Boolean).join('\n');
+    const numeric = tryNumericConstraintsFromQuestionStem(stem);
+    return extractQuestionGeometry(
+      raw,
+      mime,
+      numeric != null ? { numeric_constraints: numeric } : undefined
+    );
+  }, [subject, questionImages, extractQuestionGeometry, inputText, standardDraft?.qText]);
+
+  const onRetryQuestionGeometryExtraction = useCallback(() => {
+    void (async () => {
+      const geo = await fetchGeometryFromFirstQuestionImage();
+      setPrefetchedQuestionGeometry(geo);
+    })();
+  }, [fetchGeometryFromFirstQuestionImage]);
+
   const [transcriptionDraft, setTranscriptionDraft] = useState<Record<string, string> | null>(null);
-  const [standardDraft, setStandardDraft] = useState<{ qText: string, rText: string, sText: string } | null>(null);
+
+  const { 
+    isGrading, gradingStatus, chineseResults, standardResults, 
+    p1, p2, p3, setChineseResults, setStandardResults, resetState,
+    handleGradeStandard, transcribeChineseOnly, gradeChineseFromText,
+    transcribeStandardOnly, gradeStandardFromText
+  } = useGrading();
 
   const hasUploaded = isChineseWriting 
     ? (chineseAnswers.s1q1.q.length > 0 || chineseAnswers.s1q1.r.length > 0 || chineseAnswers.s1q1.s.length > 0 || chineseAnswers.s1q1.text.length > 0 || transcriptionDraft !== null)
     : (studentImages.length > 0 || inputText.length > 0 || standardDraft !== null);
+
+  const showResults = !!(chineseResults || standardResults);
+
+  useEffect(() => {
+    if (!subject || !GEOMETRY_PREFETCH_SUBJECT_IDS.has(subject.id)) {
+      setPrefetchedQuestionGeometry(null);
+      return;
+    }
+    const first = questionImages[0];
+    if (!first || !String(first).trim()) {
+      if (!showResults) setPrefetchedQuestionGeometry(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const geo = await fetchGeometryFromFirstQuestionImage();
+      if (!cancelled) {
+        setPrefetchedQuestionGeometry(geo);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [subject?.id, questionImages, showResults, fetchGeometryFromFirstQuestionImage]);
 
   useEffect(() => {
     if (!subjectId) return;
@@ -184,13 +273,6 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
     }
   }, [subjectId]);
 
-  const { 
-    isGrading, gradingStatus, chineseResults, standardResults, 
-    p1, p2, p3, setChineseResults, setStandardResults, resetState,
-    handleGradeStandard, transcribeChineseOnly, gradeChineseFromText,
-    transcribeStandardOnly, gradeStandardFromText
-  } = useGrading();
-
   const updateChineseAnswer = (key: string, field: keyof QuestionSet, value: any) => {
     setChineseAnswers(prev => ({
       ...prev,
@@ -200,7 +282,7 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
 
   const onStandardTranscribe = async () => {
     if (!subject) return;
-    const draft = await transcribeStandardOnly(questionImages, referenceImages, studentImages, inputText, answerMode);
+    const draft = await transcribeStandardOnly(subject, questionImages, referenceImages, studentImages, inputText, answerMode);
     if (draft) {
       setStandardDraft(draft);
     }
@@ -216,6 +298,11 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
         setReferenceImages([]);
         setStudentImages([]);
         setInputText('');
+      },
+      {
+        question: questionImages,
+        reference: referenceImages,
+        student: answerMode === 'text' ? [] : studentImages,
       }
     );
   };
@@ -245,9 +332,8 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
     resetState();
     setTranscriptionDraft(null);
     setStandardDraft(null);
+    setPrefetchedQuestionGeometry(null);
   };
-
-  const showResults = !!(chineseResults || standardResults);
 
   if (!subject) return <div>Subject not found</div>;
 
@@ -322,6 +408,7 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
                       title="題目"
                       initialText={standardDraft.qText}
                       onSave={(newText) => setStandardDraft(prev => prev ? { ...prev, qText: newText } : null)}
+                      latexPreview
                     />
                   )}
                   {standardDraft.rText && (
@@ -329,6 +416,7 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
                       title="標準詳解"
                       initialText={standardDraft.rText}
                       onSave={(newText) => setStandardDraft(prev => prev ? { ...prev, rText: newText } : null)}
+                      latexPreview
                     />
                   )}
                   {standardDraft.sText && (
@@ -336,6 +424,7 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
                       title="學生作答"
                       initialText={standardDraft.sText}
                       onSave={(newText) => setStandardDraft(prev => prev ? { ...prev, sText: newText } : null)}
+                      latexPreview
                     />
                   )}
                 </div>
@@ -405,7 +494,13 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
         </>
       )}
 
-      {showResults && <ResultsDisplay results={chineseResults || standardResults} />}
+      {showResults && (
+        <ResultsDisplay
+          results={chineseResults || standardResults}
+          prefetchedQuestionGeometry={prefetchedQuestionGeometry}
+          onRetryQuestionGeometryExtraction={onRetryQuestionGeometryExtraction}
+        />
+      )}
 
       {!showResults && (
         <div className="fixed bottom-0 left-0 right-0 p-4 md:p-6 bg-gradient-to-t from-transparent via-transparent dark:from-transparent dark:via-transparent to-transparent z-40 pointer-events-none pb-safe">

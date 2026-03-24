@@ -2,6 +2,7 @@
   "name": "asea-laptop-test",
   "private": true,
   "scripts": {
+    "dev": "npx --yes serve . -l 4174 -s",
     "start": "npx --yes serve . -l 4174 -s",
     "serve:laptop": "npx --yes serve . -l 4174 -s"
   }

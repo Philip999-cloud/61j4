@@ -41,7 +41,7 @@ describe('canvasMonkeyPatch', () => {
     document.body.removeChild(div);
   });
 
-  it('B: 未命中白名單 - 普通 canvas，getContext("2d", { alpha: false }) 應維持原樣，不加入 willReadFrequently', () => {
+  it('B: 所有 2D canvas 一律合併 willReadFrequently（含離屏／無白名單祖先）', () => {
     const canvas = document.createElement('canvas');
     document.body.appendChild(canvas);
 
@@ -50,8 +50,9 @@ describe('canvasMonkeyPatch', () => {
 
     expect(getContextCallLog).toHaveLength(1);
     expect(getContextCallLog[0].id).toBe('2d');
-    expect(getContextCallLog[0].opts).toEqual({ alpha: false });
-    expect(getContextCallLog[0].opts).not.toHaveProperty('willReadFrequently');
+    expect(getContextCallLog[0].opts).toEqual(
+      expect.objectContaining({ alpha: false, willReadFrequently: true }),
+    );
 
     document.body.removeChild(canvas);
   });
@@ -67,5 +68,35 @@ describe('canvasMonkeyPatch', () => {
     expect(getContextCallLog[0].opts).toBeUndefined();
 
     document.body.removeChild(canvas);
+  });
+
+  it('D: Plotly 容器 .js-plotly-plot 內 canvas 應傳入 willReadFrequently', () => {
+    const div = document.createElement('div');
+    div.className = 'js-plotly-plot';
+    const canvas = document.createElement('canvas');
+    div.appendChild(canvas);
+    document.body.appendChild(div);
+
+    canvas.getContext('2d');
+
+    expect(getContextCallLog).toHaveLength(1);
+    expect(getContextCallLog[0].opts).toEqual(expect.objectContaining({ willReadFrequently: true }));
+
+    document.body.removeChild(div);
+  });
+
+  it('E: JSXGraph 容器 .jxgbox 內 canvas 應傳入 willReadFrequently', () => {
+    const div = document.createElement('div');
+    div.className = 'jxgbox';
+    const canvas = document.createElement('canvas');
+    div.appendChild(canvas);
+    document.body.appendChild(div);
+
+    canvas.getContext('2d');
+
+    expect(getContextCallLog).toHaveLength(1);
+    expect(getContextCallLog[0].opts).toEqual(expect.objectContaining({ willReadFrequently: true }));
+
+    document.body.removeChild(div);
   });
 });

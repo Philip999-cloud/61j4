@@ -5,6 +5,12 @@ import { LinguisticAudit, SubjectExpertAnalysis } from '../types';
 export class AstMathAStrategy implements GradingStrategy {
   generatePrompt(content: string, audit: LinguisticAudit, expert: SubjectExpertAnalysis, instructions: string): string {
     return `
+    # 🚨 VISION ANALYSIS PROTOCOL (CRITICAL) 🚨
+    You are receiving an image containing a mathematical problem (e.g., geometry, graphs).
+    1. You MUST carefully analyze the provided image first.
+    2. Extract all numbers, variables, geometric shapes, and contextual text directly from the image.
+    3. If the image contains a diagram (like a hexagon or a coordinate plane), mentally map the vertices and boundaries before calculating.
+
     Role: Chief Moderator (Phase 3 - Synthesis) & Visual Pedagogy Engine
     Subject: AST Math A (數學甲)
     User Preferences: ${instructions || 'Standard Grading'}
@@ -39,17 +45,23 @@ export class AstMathAStrategy implements GradingStrategy {
     - **Colors**: X-axis (Red), Y-axis (Green), Z-axis (Blue).
     
     **CASE B: 2D Plane Geometry (Functions, Conics, Triangle)**
-    You **MUST** use \`svg_diagram\`.
-    - **ViewBox**: ALWAYS <svg viewBox='-100 -100 200 200' ...>
-    - **Coordinate Limit**: All coordinates (cx, cy, x1, y2, etc.) **MUST be between -80 and 80**.
-    - **Single Quotes**: Use single quotes for attributes. <circle cx='50' ... />
-    
-    **DIAGRAM CLARITY (CRITICAL)**: All SVG diagrams MUST be highly legible. 
-    - Use thick strokes: \`stroke-width='3'\` or \`stroke-width='4'\`.
-    - Use large fonts for labels: \`font-size='14'\` or \`font-size='16'\`.
-    - Use high contrast colors.
+    If the **question image** contains a **printed diagram** (polygon, shaded region, axes, etc.), you MUST use \`geometry_json\` per **GEOMETRIC PRECISION PROTOCOL v4** below (solver topology for regular polygons; deterministic SVG on the client).
+    For **self-authored** teaching sketches (no scanned figure to reproduce), you MAY use \`svg_diagram\` with a fixed viewBox and coordinates between -80 and 80, single-quoted attributes, and thick strokes.
 
-    4. **THE ULTIMATE COPY-PASTE TEMPLATES**
+    **DIAGRAM CLARITY (for svg_diagram only)**: Use \`stroke-width='3'\` or \`'4'\`, large label fonts, high contrast.
+
+    # 🚨 UNIVERSAL GEOMETRIC PRECISION PROTOCOL (CRITICAL) 🚨
+    Use mathematical reconstruction—not raster placeholders or fake URLs.
+
+    1. Set \`visualization_code.explanation\` to explain layout (Traditional Chinese allowed).
+    2. If the **question image** shows a **drawn regular polygon**, add \`geometry_json\` per **GEOMETRIC PRECISION PROTOCOL v4** below using \`solver_mode\` / topology only (no x,y). For **non-regular** figures, use full \`geometry_json\` with coordinates (v3-style). **Do NOT** use \`python_script\` for that figure.
+    3. Otherwise: **3D** → \`plotly_chart\`; **self-authored 2D** → \`svg_diagram\`; **explicit function plots** → prefer \`python_plot\`.
+    3b. **python_plot (REQUIRED FIELDS)**: If \`type\` is \`python_plot\`, you MUST include \`func_str\` (safe math expression using only \`X\`, \`Y\`, \`np\`; this is the right-hand side of \`Z = ...\`), \`x_range\`, and \`y_range\` (each a JSON array of exactly two numbers), plus optional \`plot_mode\`: \`"2d"\` or \`"3d"\`. For a single-variable function f(r), use \`X\` as the independent variable (map the problem's r to X), add \`0*Y\` if needed so Z depends only on X, and choose a tight \`y_range\` band (e.g. [-1, 1]) when using 2D contour. **Never** emit \`python_plot\` with only \`title\`/\`caption\` and no \`func_str\` and ranges—if you cannot fill them, use \`plotly_chart\` instead.
+    4. **ABSOLUTE PROHIBITION**: No PNG/JPG/WebP/base64 raster placeholders.
+
+    **Schema protection**: These rules MUST NOT remove or replace scoring fields (\`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`, etc.). \`visualization_code\` is auxiliary only.
+
+    5. **THE ULTIMATE COPY-PASTE TEMPLATES**
 
     **TEMPLATE: 2D Ellipse/Conics (SVG)**
     "visualization_code": {
@@ -60,6 +72,10 @@ export class AstMathAStrategy implements GradingStrategy {
         "svgCode": "<svg viewBox='-100 -100 200 200' xmlns='http://www.w3.org/2000/svg'><line x1='-100' y1='0' x2='100' y2='0' stroke='#3f3f46' stroke-width='2' /><line x1='0' y1='-100' x2='0' y2='100' stroke='#3f3f46' stroke-width='2' /><ellipse cx='0' cy='0' rx='60' ry='40' fill='none' stroke='#3b82f6' stroke-width='3' /><circle cx='45' cy='0' r='4' fill='#ef4444' /><text x='50' y='-10' fill='#ef4444' font-size='14'>F1</text></svg>"
       }]
     }
+
+    **TEMPLATE: 圓錐／旋轉體 (Plotly，嚴禁四面體冒充圓錐)**
+    - 圓錐：\`mesh3d\` 頂點 + 底圓周（約 48 等分）+ \`i,j,k\` 三角扇；不可只用 4 個頂點。
+    - 繞 x 軸旋轉體：一條 \`scatter3d\` 畫母線，另加半透明 \`mesh3d\` 畫旋轉曲面（x 與方位角皆需足夠細分）。
 
     **TEMPLATE: 3D Line & Plane (Plotly)**
     "visualization_code": {
@@ -83,6 +99,60 @@ export class AstMathAStrategy implements GradingStrategy {
         }
       }]
     }
+
+    # ════════════════════════════════════════════════════════════
+    # GEOMETRIC PRECISION PROTOCOL v4 — TOPOLOGY-ONLY EXTRACTION
+    # ABSOLUTE OVERRIDE: applies to ALL geometry figure questions
+    # ════════════════════════════════════════════════════════════
+
+    CRITICAL ARCHITECTURE CHANGE:
+    The rendering system has a mathematical solver for **regular** polygons.
+    You DO NOT provide pixel coordinates for those — they are computed automatically.
+    Your job is **TOPOLOGY EXTRACTION** only (what connects to what, shaded region boundaries).
+
+    ## FOR REGULAR POLYGONS (正多邊形題):
+    Add visualization_code.visualizations[] item: \`"type": "geometry_json"\`, \`"code"\` = JSON object or string with **TOPOLOGY ONLY** (no x,y):
+
+    {
+      "solver_mode": "regular_polygon",
+      "polygon_sides": <number>,
+      "canvas_width": 480,
+      "canvas_height": 480,
+      "diagonal_topology": "all" | "long_only" | "some" | "none",
+      "specific_diagonals": [["A","C"], ...] | null,
+      "shaded_region": {
+        "exists": true,
+        "fill_color": "#fef08a",
+        "boundary_lines": [["A","D"], ["B","F"], ["A","F"]],
+        "positional": null,
+        "vertex_sequence": null
+      },
+      "vertex_labels": ["A","B","C","D","E","F"],
+      "figure_in_coordinate_system": false,
+      "numeric_constraints": {
+        "shaded_to_total_ratio": 0.1667,
+        "shaded_to_total_tolerance": 0.05
+      }
+    }
+
+    ### ABSOLUTE RULES:
+    1. NEVER use "python_script" — FORBIDDEN. 3D rendering destroys accuracy.
+    2. For regular polygons: DO NOT provide x,y coordinates. Use solver_mode.
+    3. figure_in_coordinate_system: true ONLY if numbered X/Y axes are visible. Standalone shapes = false.
+    4. diagonal_topology: "all" | "long_only" | "some" (with specific_diagonals) | "none".
+    5. boundary_lines: vertex letter pairs that bound the shaded region; the solver computes exact intersections.
+    6. **PREFERRED when the problem states shaded vs whole area**: add \`numeric_constraints.shaded_to_total_ratio\` (or \`shaded_area_math\` + \`figure_area_math\`); the solver uses it **before** \`boundary_lines\`.
+
+    ## FOR NON-REGULAR OR COMPLEX FIGURES:
+    Use full geometry_json with estimated coordinates (low_level, mid_level, high_level, ocr, vertices, edges, …). The client applies best-effort correction.
+
+    ## ZERO-CHANGE RULE:
+    For non-geometry questions (pure algebra, statistics, etc.),
+    keep existing visualization_code behavior completely unchanged.
+
+    # ════════════════════════════════════════════════════════════
+    # END GEOMETRIC PRECISION PROTOCOL v4
+    # ════════════════════════════════════════════════════════════
 
     # ALTERNATIVE SOLUTIONS (MANDATORY)
     Populate "alternative_solutions" with **AT LEAST SEVEN (7)** distinct alternative solving methods.
@@ -129,6 +199,7 @@ export class AstMathAStrategy implements GradingStrategy {
             "explanation": "...",
             "visualizations": [ { "type": "plotly_chart", ... } ]
           }
+          // visualization_code 僅輔助圖示，不得刪減或取代上列評分欄位
         }
       ]
     }

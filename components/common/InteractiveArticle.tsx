@@ -4,6 +4,65 @@ import { SmilesRenderer } from '../SmilesRenderer';
 import { Viewer3D } from '../Viewer3D';
 import { DetailedFix } from '../../types';
 
+/** 區塊：$$...$$ 或 aligned／align 環境；行內：單一 $...$（非 $$） */
+type ArticleMathPiece =
+  | { kind: 'plain'; text: string }
+  | { kind: 'block'; raw: string }
+  | { kind: 'inline'; latex: string };
+
+const BLOCK_MATH_RE =
+  /\$\$[\s\S]*?\$\$|\\begin\{aligned\*?\}[\s\S]*?\\end\{aligned\*?\}|\\begin\{align\*?\}[\s\S]*?\\end\{align\*?\}/g;
+
+function splitPlainIntoInlineAndText(plain: string): ArticleMathPiece[] {
+  const pieces: ArticleMathPiece[] = [];
+  const inlineRe = /(?<!\\)\$(?!\$)([\s\S]*?)(?<!\\)\$(?!\$)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = inlineRe.exec(plain)) !== null) {
+    if (m.index > last) {
+      pieces.push({ kind: 'plain', text: plain.slice(last, m.index) });
+    }
+    pieces.push({ kind: 'inline', latex: m[1] ?? '' });
+    last = m.index + m[0].length;
+  }
+  if (last < plain.length) {
+    pieces.push({ kind: 'plain', text: plain.slice(last) });
+  }
+  if (pieces.length === 0 && plain) {
+    pieces.push({ kind: 'plain', text: plain });
+  }
+  return pieces;
+}
+
+/** 將段落拆成「行內 $...$」與「區塊 $$／aligned」片段，供獨立排版 */
+function splitArticleMathSegments(text: string): ArticleMathPiece[] {
+  const out: ArticleMathPiece[] = [];
+  const s = text;
+  let last = 0;
+  BLOCK_MATH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = BLOCK_MATH_RE.exec(s)) !== null) {
+    if (m.index > last) {
+      out.push(...splitPlainIntoInlineAndText(s.slice(last, m.index)));
+    }
+    out.push({ kind: 'block', raw: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) {
+    out.push(...splitPlainIntoInlineAndText(s.slice(last)));
+  }
+  if (out.length === 0) {
+    out.push(...splitPlainIntoInlineAndText(s));
+  }
+  return out;
+}
+
+function blockContentForMarkdown(raw: string): string {
+  const t = raw.trim();
+  if (t.startsWith('$$')) return t;
+  return `$$\n${t}\n$$`;
+}
+
 /**
  * 找出文本中所有 LaTeX 區塊的 [start, end) 範圍。
  * 支援 $$...$$ (display mode) 與 $...$ (inline mode)。
@@ -11,13 +70,40 @@ import { DetailedFix } from '../../types';
  */
 function findLatexBlocks(text: string): { start: number; end: number }[] {
   const blocks: { start: number; end: number }[] = [];
-  // 先匹配 $$...$$，再匹配 $...$（避免 \$ 被當成界定符）
-  const regex = /(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$(?!\$)[\s\S]*?(?<!\\)\$/g;
+  const regex =
+    /(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$(?!\$)[\s\S]*?(?<!\\)\$|\\begin\{aligned\*?\}[\s\S]*?\\end\{aligned\*?\}|\\begin\{align\*?\}[\s\S]*?\\end\{align\*?\}/g;
   let m: RegExpExecArray | null;
   while ((m = regex.exec(text)) !== null) {
     blocks.push({ start: m.index, end: m.index + m[0].length });
   }
   return blocks;
+}
+
+const CHEM_SPLIT_RE = /(<smiles>.*?<\/smiles>|<mol3d\s+cid=".*?"\s*\/>|<mol3d>.*?<\/mol3d>)/g;
+
+function renderChemistrySplitPart(part: string, keyPrefix: string): React.ReactNode {
+  const parts = part.split(CHEM_SPLIT_RE);
+  return (
+    <>
+      {parts.map((p, idx) => {
+        if (!p) return null;
+        if (p.startsWith('<smiles>') && p.endsWith('</smiles>')) {
+          const smiles = p.slice(8, -9);
+          return <SmilesRenderer key={`${keyPrefix}-${idx}`} smiles={smiles} className="my-4" />;
+        }
+        if (p.startsWith('<mol3d') && p.endsWith('/>')) {
+          const match = p.match(/cid="([^"]+)"/);
+          const cid = match ? match[1] : '';
+          return <Viewer3D key={`${keyPrefix}-${idx}`} cid={cid} />;
+        }
+        if (p.startsWith('<mol3d>') && p.endsWith('</mol3d>')) {
+          const cid = p.slice(7, -8);
+          return <Viewer3D key={`${keyPrefix}-${idx}`} cid={cid} />;
+        }
+        return <LatexRenderer key={`${keyPrefix}-${idx}`} content={p} isInline={true} className="inline" />;
+      })}
+    </>
+  );
 }
 
 /**
@@ -82,6 +168,91 @@ export const InteractiveArticle: React.FC<{ fullText: string; fixes: DetailedFix
   const [activeFix, setActiveFix] = React.useState<DetailedFix | null>(null);
   const [position, setPosition] = React.useState({ x: 0, y: 0 });
 
+  const openFixPanel = React.useCallback((e: React.MouseEvent | React.KeyboardEvent, fix: DetailedFix) => {
+    const el = e.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    setPosition({ x: rect.left + window.scrollX, y: rect.bottom + window.scrollY + 10 });
+    setActiveFix(fix);
+  }, []);
+
+  const renderMathPiecesRow = React.useCallback(
+    (pieces: ArticleMathPiece[], keyBase: string, fix: DetailedFix | undefined) =>
+      pieces.map((p, idx) => {
+        const key = `${keyBase}-${idx}`;
+        if (p.kind === 'block') {
+          const inner = (
+            <LatexRenderer
+              content={blockContentForMarkdown(p.raw)}
+              isInline={false}
+              className="text-[var(--text-primary)]"
+            />
+          );
+          if (fix) {
+            return (
+              <div
+                key={key}
+                role="button"
+                tabIndex={0}
+                className="block my-6 py-4 overflow-x-auto rounded-xl border border-red-500/40 bg-red-500/5 cursor-pointer hover:bg-red-500/10 transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openFixPanel(e, fix);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    openFixPanel(e, fix);
+                  }
+                }}
+              >
+                {inner}
+              </div>
+            );
+          }
+          return (
+            <div key={key} className="block my-6 py-4 overflow-x-auto">
+              {inner}
+            </div>
+          );
+        }
+        if (p.kind === 'inline') {
+          const inner = <LatexRenderer content={`$${p.latex}$`} isInline={true} className="inline" />;
+          if (fix) {
+            return (
+              <span
+                key={key}
+                className="border-b-2 border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10 cursor-pointer hover:bg-red-500/20 transition-colors mx-0.5 px-0.5 rounded inline-block"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openFixPanel(e, fix);
+                }}
+              >
+                {inner}
+              </span>
+            );
+          }
+          return <React.Fragment key={key}>{inner}</React.Fragment>;
+        }
+        const plainNodes = renderChemistrySplitPart(p.text, `${key}-chem`);
+        if (fix && p.text) {
+          return (
+            <span
+              key={key}
+              className="border-b-2 border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10 cursor-pointer hover:bg-red-500/20 transition-colors mx-0.5 px-0.5 rounded inline-block"
+              onClick={(e) => {
+                e.stopPropagation();
+                openFixPanel(e, fix);
+              }}
+            >
+              {plainNodes}
+            </span>
+          );
+        }
+        return <React.Fragment key={key}>{plainNodes}</React.Fragment>;
+      }),
+    [openFixPanel]
+  );
+
   if (!fullText) return <p className="text-[var(--text-secondary)] italic">無法顯示原始文章內容。</p>;
 
   const safeFullText = typeof fullText === 'string' ? fullText : String(fullText);
@@ -119,41 +290,16 @@ export const InteractiveArticle: React.FC<{ fullText: string; fixes: DetailedFix
         });
 
         return (
-          <div key={pIdx} className="mb-6 last:mb-0 transition-colors duration-300 break-words">
-            {segments.map((seg, i) => (
-              seg.fix ? (
-                <span 
-                  key={i}
-                  className="border-b-2 border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/10 cursor-pointer hover:bg-red-500/20 transition-colors mx-0.5 px-0.5 rounded inline-block"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setPosition({ x: rect.left + window.scrollX, y: rect.bottom + window.scrollY + 10 });
-                    setActiveFix(seg.fix || null);
-                  }}
-                >
-                  <LatexRenderer content={seg.text} isInline={true} />
-                </span>
-              ) : (
-                seg.text.split(/(<smiles>.*?<\/smiles>|<mol3d\s+cid=".*?"\s*\/>|<mol3d>.*?<\/mol3d>)/g).map((part, idx) => {
-                  if (!part) return null;
-                  if (part.startsWith('<smiles>') && part.endsWith('</smiles>')) {
-                    const smiles = part.slice(8, -9);
-                    return <SmilesRenderer key={`${i}-${idx}`} smiles={smiles} className="my-4" />;
-                  }
-                  if (part.startsWith('<mol3d') && part.endsWith('/>')) {
-                    const match = part.match(/cid="([^"]+)"/);
-                    const cid = match ? match[1] : '';
-                    return <Viewer3D key={`${i}-${idx}`} cid={cid} />;
-                  }
-                  if (part.startsWith('<mol3d>') && part.endsWith('</mol3d>')) {
-                    const cid = part.slice(7, -8);
-                    return <Viewer3D key={`${i}-${idx}`} cid={cid} />;
-                  }
-                  return <LatexRenderer key={`${i}-${idx}`} content={part} isInline={true} className="inline" />;
-                })
-              )
-            ))}
+          <div key={pIdx} className="mb-8 last:mb-0 leading-[2.5] transition-colors duration-300 break-words">
+            {segments.map((seg, i) => {
+              const segText = typeof seg.text === 'string' ? seg.text : String(seg.text);
+              const pieces = splitArticleMathSegments(segText);
+              return (
+                <React.Fragment key={i}>
+                  {renderMathPiecesRow(pieces, `p${pIdx}-s${i}`, seg.fix)}
+                </React.Fragment>
+              );
+            })}
           </div>
         );
       })}

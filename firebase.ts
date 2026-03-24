@@ -15,7 +15,7 @@ import {
   deleteUser as firebaseDeleteUser,
   type User
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getAnalytics, logEvent as firebaseLogEvent, type Analytics } from 'firebase/analytics';
 
@@ -48,7 +48,10 @@ if (typeof window !== 'undefined') {
     );
   }
 }
-export const db = getFirestore(app);
+/** Long polling 可避免部分網路環境下 WebChannel/QUIC 寫入失敗 (ERR_QUIC_PROTOCOL_ERROR) */
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+});
 export const storage = getStorage(app);
 
 // Re-export auth helpers for use in AppContext

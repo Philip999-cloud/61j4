@@ -4,7 +4,7 @@ import katex from 'katex';
 import 'katex/contrib/mhchem';
 import 'katex/dist/katex.min.css';
 
-/** AI 產生 SVG：允許 KaTeX／MathML 與 foreignObject，避免誤刪數學標籤 */
+/** AI 產生 SVG：Campbell 級解剖／機制圖 — 保留 defs、漸層、遮罩、marker、filter */
 const PHYSICS_SVG_SANITIZE: DOMPurify.Config = {
   USE_PROFILES: { svg: true, svgFilters: true, mathMl: true },
   ADD_TAGS: [
@@ -18,9 +18,98 @@ const PHYSICS_SVG_SANITIZE: DOMPurify.Config = {
     'msup',
     'mspace',
     'annotation',
+    'defs',
+    'linearGradient',
+    'radialGradient',
+    'stop',
+    'clipPath',
+    'mask',
+    'marker',
+    'pattern',
+    'filter',
+    'feGaussianBlur',
+    'feColorMatrix',
+    'feOffset',
+    'feMerge',
+    'feMergeNode',
+    'feFlood',
+    'feComposite',
+    'feBlend',
+    'feDropShadow',
+    'feMorphology',
+    'feComponentTransfer',
+    'feFuncA',
+    'feFuncR',
+    'feFuncG',
+    'feFuncB',
+    'symbol',
+    'use',
+    'image',
+    'title',
+    'desc',
   ],
-  ADD_ATTR: ['xmlns'],
+  ADD_ATTR: [
+    'xmlns',
+    'xmlns:xlink',
+    'gradientUnits',
+    'gradientTransform',
+    'spreadMethod',
+    'fx',
+    'fy',
+    'cx',
+    'cy',
+    'r',
+    'x1',
+    'y1',
+    'x2',
+    'y2',
+    'offset',
+    'stop-color',
+    'stop-opacity',
+    'clip-path',
+    'mask',
+    'marker-start',
+    'marker-mid',
+    'marker-end',
+    'markerUnits',
+    'markerWidth',
+    'markerHeight',
+    'refX',
+    'refY',
+    'orient',
+    'preserveAspectRatio',
+    'patternUnits',
+    'patternContentUnits',
+    'patternTransform',
+    'filter',
+    'flood-color',
+    'flood-opacity',
+    'stdDeviation',
+    'in',
+    'in2',
+    'result',
+    'mode',
+    'operator',
+    'k1',
+    'k2',
+    'k3',
+    'k4',
+    'xlink:href',
+  ],
 };
+
+/** 從 AI 回傳字串中取出第一個完整 `<svg>...</svg>`，略過 Markdown 围栏與雜訊 */
+export function extractFirstSvgFragment(raw: string): string {
+  if (typeof raw !== 'string') return '';
+  const m = raw.match(/<svg[\s\S]*?<\/svg>/i);
+  return (m ? m[0] : raw).trim();
+}
+
+/** 供 VisualizationRenderer / SmartSvg 等先洗 XSS，再交 PhysicsRenderer（可重複呼叫，結果仍安全） */
+export function sanitizeAiSvgCode(raw: string): string {
+  const extracted = extractFirstSvgFragment(raw);
+  return DOMPurify.sanitize(extracted, PHYSICS_SVG_SANITIZE);
+}
 
 const cleanLatexForSvg = (text: string) => {
   if (!text) return '';
@@ -64,45 +153,90 @@ function renderLatexToHtml(text: string): string {
 }
 
 function normalizeSvgResponsive(svg: SVGSVGElement) {
-  svg.removeAttribute('width');
-  svg.removeAttribute('height');
   if (!svg.getAttribute('viewBox')) {
     svg.setAttribute('viewBox', '0 0 400 300');
   }
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', '100%');
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   svg.style.width = '100%';
-  svg.style.height = 'auto';
+  svg.style.height = '100%';
   svg.style.maxWidth = '100%';
+  svg.style.display = 'block';
   svg.style.overflow = 'visible';
-  svg.setAttribute('class', `${svg.getAttribute('class') || ''} physics-renderer-svg`.trim());
+  svg.setAttribute('class', `${svg.getAttribute('class') || ''} physics-renderer-svg smart-svg-canvas`.trim());
 }
 
-/** 將常見硬編碼描邊改為 currentColor，便於 Dark/Light 與主題變數 */
-function applyThemeAwareStrokes(svg: SVGSVGElement) {
-  const strokeCandidates = svg.querySelectorAll('[stroke]:not([stroke="none"])');
-  strokeCandidates.forEach((el) => {
-    const s = el.getAttribute('stroke');
-    if (s && /^#[0-9a-fA-F]{3,8}$/.test(s)) {
-      el.setAttribute('stroke', 'currentColor');
+/**
+ * 生物／教材插圖：保留原始 fill／stroke（動脈紅、靜脈藍等），不改成 currentColor。
+ */
+function ensureDiagramLabelReadability(svg: SVGSVGElement, labelFilterId: string) {
+  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  let defs = svg.querySelector('defs');
+  if (!defs) {
+    defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    svg.insertBefore(defs, svg.firstChild);
+  }
+  let filter = defs.querySelector(`#${CSS.escape(labelFilterId)}`) as SVGFilterElement | null;
+  if (!filter) {
+    filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+    filter.setAttribute('id', labelFilterId);
+    filter.setAttribute('x', '-40%');
+    filter.setAttribute('y', '-40%');
+    filter.setAttribute('width', '180%');
+    filter.setAttribute('height', '180%');
+    const feDrop = document.createElementNS('http://www.w3.org/2000/svg', 'feDropShadow');
+    feDrop.setAttribute('dx', '0');
+    feDrop.setAttribute('dy', '1');
+    feDrop.setAttribute('stdDeviation', isDark ? '1.2' : '1');
+    feDrop.setAttribute('flood-color', isDark ? '#000000' : '#ffffff');
+    feDrop.setAttribute('flood-opacity', isDark ? '0.85' : '0.9');
+    filter.appendChild(feDrop);
+    defs.appendChild(filter);
+  }
+
+  svg.querySelectorAll('text').forEach((textEl) => {
+    if (textEl.closest('foreignObject')) return;
+    if (!textEl.getAttribute('filter')) {
+      textEl.setAttribute('filter', `url(#${labelFilterId})`);
     }
+  });
+}
+
+function styleForeignObjectLabelRoots(svg: SVGSVGElement) {
+  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const shadow = isDark ? '0 1px 2px rgba(0,0,0,0.8)' : '0 1px 2px rgba(255,255,255,0.8)';
+  const capsuleBg = isDark ? 'rgba(0,0,0,0.38)' : 'rgba(255,255,255,0.78)';
+
+  svg.querySelectorAll('foreignObject div').forEach((node) => {
+    const el = node as HTMLElement;
+    const innermost = (el.querySelector('div') || el) as HTMLElement;
+    if (innermost.classList.contains('smart-svg-fo-styled')) return;
+    innermost.classList.add('smart-svg-fo-styled');
+    const prev = innermost.style.cssText;
+    innermost.style.cssText = `${prev};text-shadow:${shadow};border-radius:6px;padding:2px 8px;background:${capsuleBg};box-decoration-break:clone;-webkit-box-decoration-break:clone;`.trim();
   });
 }
 
 export interface PhysicsRendererProps {
   svgCode: string;
   className?: string;
+  /** false = 將部分 hex stroke 改為 currentColor（舊物理圖主題）；true = 保留教材圖原始色彩（預設） */
+  preserveDiagramColors?: boolean;
 }
 
 /**
  * 物理／STEM SVG：解析後掃描 <text>，若內容含 $...$ 等數學標記則以 foreignObject 嵌入 KaTeX；
  * 響應式以 viewBox 為主，並透過 currentColor 配合主題。
  */
-export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({ svgCode, className = '' }) => {
+export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({
+  svgCode,
+  className = '',
+  preserveDiagramColors = true,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const safeSvgCode = useMemo(
-    () => DOMPurify.sanitize(svgCode, PHYSICS_SVG_SANITIZE),
-    [svgCode]
-  );
+  const labelFilterIdRef = useRef(`smart-svg-text-halo-${Math.random().toString(36).slice(2, 10)}`);
+  const safeSvgCode = useMemo(() => sanitizeAiSvgCode(svgCode), [svgCode]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -110,16 +244,38 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({ svgCode, class
     if (!svgElement) return;
 
     normalizeSvgResponsive(svgElement);
-    applyThemeAwareStrokes(svgElement);
 
-    if (!svgElement.querySelector('defs')) {
-      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-      defs.innerHTML = `
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker>
-        <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker>
-        <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker>
-      `;
-      svgElement.prepend(defs);
+    if (!preserveDiagramColors) {
+      const strokeCandidates = svgElement.querySelectorAll('[stroke]:not([stroke="none"])');
+      strokeCandidates.forEach((el) => {
+        const s = el.getAttribute('stroke');
+        if (s && /^#[0-9a-fA-F]{3,8}$/.test(s)) {
+          el.setAttribute('stroke', 'currentColor');
+        }
+      });
+    }
+
+    let defsEl = svgElement.querySelector('defs');
+    if (!defsEl) {
+      defsEl = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      svgElement.insertBefore(defsEl, svgElement.firstChild);
+    }
+    if (!defsEl.querySelector('marker#arrow')) {
+      ['arrow', 'arrow-red', 'arrow-blue'].forEach((mid) => {
+        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+        marker.setAttribute('id', mid);
+        marker.setAttribute('viewBox', '0 0 10 10');
+        marker.setAttribute('refX', '9');
+        marker.setAttribute('refY', '5');
+        marker.setAttribute('markerWidth', '6');
+        marker.setAttribute('markerHeight', '6');
+        marker.setAttribute('orient', 'auto');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+        path.setAttribute('fill', 'currentColor');
+        marker.appendChild(path);
+        defsEl!.appendChild(marker);
+      });
     }
 
     const replaceTextWithForeignObject = (
@@ -129,26 +285,14 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({ svgCode, class
       inheritFontSize?: string
     ) => {
       const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
-      const x = parseFloat(textNode.getAttribute('x') || '0');
-      const y = parseFloat(textNode.getAttribute('y') || '0');
       const textAnchor = textNode.getAttribute('text-anchor') || 'start';
       const fontSizeRaw = textNode.getAttribute('font-size') || inheritFontSize || '12';
       const fontSizePx = parseFloat(String(fontSizeRaw)) || 12;
 
-      const foWidth = Math.max(200, 240);
-      const foHeight = Math.max(100, 120);
-
-      let finalX = x;
-      if (textAnchor === 'middle') finalX = x - foWidth / 2;
-      else if (textAnchor === 'end') finalX = x - foWidth;
-
-      const baselineLift = Math.max(14, fontSizePx * 0.85);
-      const finalY = y - baselineLift;
-
-      fo.setAttribute('x', String(finalX));
-      fo.setAttribute('y', String(finalY));
-      fo.setAttribute('width', String(foWidth));
-      fo.setAttribute('height', String(foHeight));
+      fo.setAttribute('x', textNode.getAttribute('x') ?? '0');
+      fo.setAttribute('y', textNode.getAttribute('y') ?? '0');
+      fo.setAttribute('width', '1');
+      fo.setAttribute('height', '1');
       fo.setAttribute('overflow', 'visible');
       fo.style.overflow = 'visible';
       fo.style.pointerEvents = 'none';
@@ -156,24 +300,33 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({ svgCode, class
       const outer = document.createElement('div');
       outer.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
       outer.style.cssText =
-        'position:relative;width:100%;height:100%;overflow:visible;pointer-events:none;box-sizing:border-box';
+        'position:relative;overflow:visible;pointer-events:none;box-sizing:border-box';
 
       const inner = document.createElement('div');
       inner.innerHTML = htmlContent;
       inner.style.color = 'var(--text-primary, currentColor)';
       inner.style.fontSize = `${fontSizePx}px`;
       inner.style.whiteSpace = 'nowrap';
-      inner.style.position = 'absolute';
-      inner.style.left = `${x - finalX}px`;
-      inner.style.top = `${y - finalY}px`;
+      inner.style.width = 'max-content';
+      const isDarkFo = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+      inner.style.textShadow = isDarkFo
+        ? '0 1px 2px rgba(0,0,0,0.8)'
+        : '0 1px 2px rgba(255,255,255,0.8)';
+      inner.style.borderRadius = '6px';
+      inner.style.padding = '2px 8px';
+      inner.style.background = isDarkFo ? 'rgba(0,0,0,0.38)' : 'rgba(255,255,255,0.78)';
+      inner.style.boxDecorationBreak = 'clone';
+      (inner.style as unknown as { webkitBoxDecorationBreak?: string }).webkitBoxDecorationBreak = 'clone';
+      inner.classList.add('smart-svg-fo-styled');
 
       if (textAnchor === 'middle') {
-        inner.style.transform = 'translateX(-50%)';
+        inner.style.transform = 'translate(-50%, -50%)';
         inner.style.textAlign = 'center';
       } else if (textAnchor === 'end') {
-        inner.style.transform = 'translateX(-100%)';
+        inner.style.transform = 'translate(-100%, -50%)';
         inner.style.textAlign = 'right';
       } else {
+        inner.style.transform = 'translate(0, -50%)';
         inner.style.textAlign = 'left';
       }
 
@@ -191,8 +344,10 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({ svgCode, class
       originalText = cleanLatexForSvg(originalText);
 
       if (!textNeedsLatexRendering(originalText)) {
-        if (!node.getAttribute('fill') || /^#[0-9a-fA-F]{3,8}$/.test(node.getAttribute('fill') || '')) {
-          node.setAttribute('fill', 'currentColor');
+        if (!preserveDiagramColors) {
+          if (!node.getAttribute('fill') || /^#[0-9a-fA-F]{3,8}$/.test(node.getAttribute('fill') || '')) {
+            node.setAttribute('fill', 'currentColor');
+          }
         }
         return;
       }
@@ -223,12 +378,15 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({ svgCode, class
         processTextNode(textNode);
       }
     });
-  }, [svgCode, safeSvgCode]);
+
+    ensureDiagramLabelReadability(svgElement, labelFilterIdRef.current);
+    styleForeignObjectLabelRoots(svgElement);
+  }, [svgCode, safeSvgCode, preserveDiagramColors]);
 
   return (
     <div
       ref={containerRef}
-      className={`physics-renderer-root w-full max-w-full overflow-x-auto text-[var(--text-primary)] ${className}`}
+      className={`physics-renderer-root smart-svg-root isolate w-full max-w-full h-full min-h-[inherit] overflow-x-auto [&_svg]:max-w-none ${preserveDiagramColors ? '' : 'text-[var(--text-primary)]'} ${className}`}
       dangerouslySetInnerHTML={{ __html: safeSvgCode }}
     />
   );

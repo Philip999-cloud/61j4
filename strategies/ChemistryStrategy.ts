@@ -144,37 +144,47 @@ export class ChemistryStrategy implements GradingStrategy {
     3. **Sub-score Distribution (子項分數拆解)**: 
        - The student's achieved score is the sum of: 'setup' + 'process' + 'result' + 'logic'.
        - This sum MUST NOT exceed the "max_points".
-       - If the student's answer is completely wrong, these values should be 0.
+       - **Partial credit (部分給分 — 強制)**: If ANY part is correct (e.g. correct reaction setup, valid stoichiometry, correct precipitation or common-ion reasoning, proper units), you MUST assign non-zero score to the matching dimension(s) ('setup', 'process', 'logic', and/or 'result'). Do NOT give all zeros unless the submission shows no valid chemistry reasoning at all.
+       - **Final-step errors** (e.g. wrong buffer/titration formula while earlier steps are sound): deduct mainly in 'result' and/or 'logic', not by zeroing the entire question.
+       - **Consistency with remarks_zh (強制)**: The top-level "remarks_zh" MUST NOT praise specific correct work (e.g. "能正確處理沉澱反應") while leaving every sub-question's setup/process/result/logic at zero. If you describe a strength in the remarks, reflect it in the numeric sub-scores.
+       - Only when the answer is entirely irrelevant or blank should all sub-scores be 0.
 
     Inputs:
     1. Content: ${content}
     2. Phase 1 Audit: ${JSON.stringify(audit)}
     3. Phase 2 Expert Analysis: ${JSON.stringify(expert)}
 
+    # FIELD DEFINITIONS (CRITICAL)
+    Before generating the JSON, you MUST adhere to these exact rules for specific fields:
+    - "key_molecules_smiles": MUST contain an array of SMILES strings for key molecules discussed in the question. If none exist, output an empty array [].
+    - "max_points": MUST be the exact total points extracted from the question text (e.g., 4, 5, 10). DO NOT default to 5.
+    - "setup": Score for chemical setup, reactions, and equations (觀念/列式得分).
+    - "process": Score for stoichiometry and mathematical calculation steps (運算過程得分).
+    - "result": Score for the final analytical result and sig figs (答案正確性得分).
+    - "logic": Additional score for logical deduction (邏輯附加分).
+
     # OUTPUT JSON STRUCTURE (STRICT ENFORCEMENT)
-    You MUST output ONLY valid JSON.
-    **ABSOLUTELY NO MARKDOWN CODE BLOCKS.**
-    
+    CRITICAL: The JSON output below MUST NOT contain any // comments, trailing commas, or markdown code block formatting (like \`\`\`json). Output ONLY the raw JSON string.
+
     {
       "final_score": 0,
       "max_score": 0,
       "remarks_zh": "整體試卷的主席綜整評語。",
       "growth_roadmap": ["建議..."],
       "detailed_fixes": [],
-      "compounds": [{"name": "化合物顯示名（可中文）", "formula": "化學式", "smiles": "標準SMILES", "english_name": "英文學名或IUPAC（無SMILES時擇一）"}],
       "stem_sub_results": [
         {
           "sub_id": "題號",
-          "key_molecules_smiles": ["SMILES字串1", "SMILES字串2"], // 👈 必填：該題重要分子的SMILES，若無則填 []
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "key_molecules_smiles": ["SMILES字串1", "SMILES字串2"],
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "Step-by-Step Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details...", "Method 3 Details..."],
-          "correct_calculation": "① First Step Calculation:\\n $$...table...$$",
+          "correct_calculation": "First Step Calculation: $$...table...$$",
           "annotations": ["Text"],
           "visualization_code": {
              "explanation": "Chemistry visualization explanation...",

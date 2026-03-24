@@ -6,7 +6,8 @@ import {
   ModeratorSynthesis, 
   SectionResult,
   ChineseTaskContent,
-  GradingResults
+  GradingResults,
+  Subject,
 } from "./types";
 import { StrategyFactory } from "./strategies/StrategyFactory";
 
@@ -42,6 +43,54 @@ Every \\left command (e.g., \\left(, \\left[, \\left\\{) MUST have a precisely m
 const CHEMISTRY_SUBJECTS = ['化學', 'Chemistry', '自然'];
 const COMPOUNDS_SCHEMA_SUBJECTS = ['化學', 'Chemistry', '自然', '物理', 'Physics'];
 
+/** Pro 逾時或忙碌時改走較快模型（勿與下方 Pro 模型字串相同，否則 fallback 無效） */
+const GEMINI_FLASH_FALLBACK_MODEL = 'gemini-3-flash-preview';
+
+/** 可於 .env 設 VITE_GEMINI_PRO_MODEL 覆寫（例如連線至 3.1 預覽端點頻繁被重置時改試其他可用模型） */
+const GEMINI_PRO_MODEL =
+  (import.meta.env.VITE_GEMINI_PRO_MODEL as string | undefined)?.trim() || 'gemini-3.1-pro-preview';
+
+function createGeminiAi(apiKey: string): GoogleGenAI {
+  return new GoogleGenAI({
+    apiKey: String(apiKey).trim(),
+    httpOptions: {
+      timeout: 300_000,
+      retryOptions: { attempts: 5 },
+    },
+  });
+}
+
+/** 彙整 SDK／fetch 丟出的巢狀錯誤字串，供暫態判斷與 log（避免 status／message 皆為空時顯示 undefined） */
+function flattenGeminiErrorText(err: unknown): string {
+  const parts: string[] = [];
+  const visit = (x: unknown, depth: number) => {
+    if (depth > 8 || x == null) return;
+    if (typeof x === 'string') {
+      parts.push(x);
+      return;
+    }
+    if (typeof x === 'number' || typeof x === 'boolean') {
+      parts.push(String(x));
+      return;
+    }
+    if (x instanceof Error) {
+      if (x.name) parts.push(x.name);
+      if (x.message) parts.push(x.message);
+      visit((x as Error & { cause?: unknown }).cause, depth + 1);
+      return;
+    }
+    if (typeof x === 'object') {
+      const o = x as Record<string, unknown>;
+      if (typeof o.message === 'string') parts.push(o.message);
+      if (typeof o.status === 'number') parts.push(String(o.status));
+      if (o.error) visit(o.error, depth + 1);
+      if (o.cause) visit(o.cause, depth + 1);
+    }
+  };
+  visit(err, 0);
+  return parts.filter(Boolean).join(' | ');
+}
+
 /**
  * 判斷是否為化學科目
  */
@@ -49,11 +98,46 @@ function isChemistrySubject(subjectName: string): boolean {
   return CHEMISTRY_SUBJECTS.some(k => subjectName.includes(k));
 }
 
-function buildSystemInstruction(baseInstruction: string, subjectName: string): string {
-  console.log('[buildSystemInstruction] subjectName:', subjectName, 'isChemistry:', isChemistrySubject(subjectName));
-  if (!isChemistrySubject(subjectName)) return baseInstruction;
+/** 與 StrategyFactory 數學科路由一致，避免誤套到其他科目 */
+function isMathStemSubject(subjectName: string): boolean {
+  const normalized = subjectName.toLowerCase();
+  if (
+    normalized.includes('數甲') ||
+    normalized.includes('數學甲') ||
+    normalized.includes('math a (ast)')
+  ) {
+    return true;
+  }
+  if (
+    normalized.includes('數a') ||
+    normalized.includes('數學a') ||
+    normalized.includes('math a (gsat)')
+  ) {
+    return true;
+  }
+  if (
+    normalized.includes('數b') ||
+    normalized.includes('數學b') ||
+    normalized.includes('math b')
+  ) {
+    return true;
+  }
+  return false;
+}
 
-  return baseInstruction + `
+const MATH_STEM_VIZ_APPENDIX = `
+
+# MATH STEM — visualization_code（結構提醒，不改評分欄位）
+每一個 stem_sub_results 項目必須包含 "visualization_code" 鍵：其值為 { "explanation": "...", "visualizations": [ ... ] } 或 null。
+若小題涉及幾何、座標、函數圖形、向量、圓錐曲線、積分面積等需要精準圖示者，不得以純文字描述代替圖形；應輸出 svg_diagram（欄位 svgCode，完整 <svg>...</svg>）、3D 用 plotly_chart、函數圖優先 python_plot（func_str、x_range、y_range 與現有沙箱一致）。僅當無法以上述類型表達時，可使用 type "python_script" 並提供完整腳本字串（欄位 code）；前端僅展示程式碼、不執行。
+visualizations[].type 可使用：svg_diagram、plotly_chart、python_plot、python_script（後者僅備援）。
+嚴禁改動 setup、process、result、logic、max_points 的語意與加總規則；visualization_code 為獨立輔助欄位，不得刪減或取代評分 JSON 結構。
+`;
+
+function buildSystemInstruction(baseInstruction: string, subjectName: string): string {
+  let result = baseInstruction;
+  if (isChemistrySubject(subjectName)) {
+    result += `
 
 # CHEMISTRY COMPOUND EXTRACTION（化學科強制規則，JSON Schema 優先）
 你的 JSON 回覆**頂層**必須包含 "compounds" 陣列。
@@ -81,10 +165,15 @@ stem_sub_results 中相關的 sub 必須填入 visualization_code，
 type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
 若題目不需要圖形輔助，可設為 null。
 `;
+  }
+  if (isMathStemSubject(subjectName)) {
+    result += MATH_STEM_VIZ_APPENDIX;
+  }
+  return result;
 }
 
 // Enhanced Retry Logic with Exponential Backoff
-async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 3, baseDelay = 2000) {
+async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 4, baseDelay = 2000) {
   let lastError;
   for (let i = 0; i < retries; i++) {
     try {
@@ -92,10 +181,13 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
       return result;
     } catch (e: any) {
       lastError = e;
-      console.error('Gemini API Error Details:', e);
 
       const status = e.status || e.code || e.error?.code || e.response?.status;
-      const message = (e.message || e.error?.message || JSON.stringify(e) || '').toString();
+      const flat = flattenGeminiErrorText(e);
+      const message = (
+        flat ||
+        (e.message || e.error?.message || JSON.stringify(e) || '') as string
+      ).toString();
 
       // 0. API 密鑰或模型錯誤：立即拋出，讓外層得知具體原因
       const errMsgLower = message.toLowerCase();
@@ -106,6 +198,7 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
         errMsgLower.includes('api_key_invalid') ||
         errMsgLower.includes('api key not valid')
       ) {
+        console.error('Gemini API Error Details:', e);
         throw new Error('API 密鑰無效或已過期，請檢查 .env 中的 VITE_GEMINI_API_KEY 設定。');
       }
       if (
@@ -113,6 +206,7 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
         errMsgLower.includes('model_not_found') ||
         (errMsgLower.includes('model') && errMsgLower.includes('not found'))
       ) {
+        console.error('Gemini API Error Details:', e);
         throw new Error('指定的模型不存在或無法使用，請檢查模型名稱。');
       }
 
@@ -122,29 +216,46 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
          throw new Error("請求內容無效 (Invalid Argument)。可能是圖片檔案過大、格式不支援或內容為空。");
       }
 
-      // 2. Identify Transient/Server Errors
-      const isTransient = 
-        status === 503 || 
-        status === 500 || 
-        status === 429 || 
+      // 2. Identify Transient/Server Errors（含瀏覽器 net::ERR_CONNECTION_CLOSED / Failed to fetch 等無 HTTP status 之情況）
+      const isTransient =
+        status === 503 ||
+        status === 500 ||
+        status === 429 ||
+        errMsgLower.includes('failed to fetch') ||
+        errMsgLower.includes('fetch failed') ||
+        errMsgLower.includes('err_connection') ||
+        errMsgLower.includes('connection closed') ||
+        errMsgLower.includes('connection reset') ||
+        errMsgLower.includes('econnreset') ||
+        errMsgLower.includes('networkerror') ||
+        errMsgLower.includes('network error') ||
+        errMsgLower.includes('load failed') ||
+        errMsgLower.includes('econnrefused') ||
+        (e?.name === 'TypeError' && errMsgLower.includes('fetch')) ||
         (message && (
-            message.includes('overloaded') || 
-            message.includes('503') || 
-            message.includes('high demand') || 
-            message.includes('capacity') ||
-            message.includes('UNAVAILABLE') ||
-            message.includes('timeout') ||
-            message.includes('internal error') ||
-            message.includes('fetch failed')
+          message.includes('overloaded') ||
+          message.includes('503') ||
+          message.includes('high demand') ||
+          message.includes('capacity') ||
+          message.includes('UNAVAILABLE') ||
+          message.includes('timeout') ||
+          message.includes('internal error')
         ));
-      
-      // 3. Exponential Backoff
+
+      // 3. Exponential Backoff（暫態錯誤不重複 console.error，避免批改流程洗版）
       if (isTransient && i < retries - 1) {
+        const retryLabel = status != null ? String(status) : message ? message.slice(0, 120) : 'network';
+        if (import.meta.env.DEV) {
+          console.debug(`[Gemini API] transient (attempt ${i + 1}/${retries}):`, retryLabel);
+        }
         const delay = baseDelay * Math.pow(2, i) + (Math.random() * 500); // Add jitter
-        console.warn(`Gemini API Transient Error (${status}). Retrying in ${Math.round(delay)}ms... (Attempt ${i+1}/${retries})`);
+        console.warn(
+          `Gemini API Transient Error (${retryLabel}). Retrying in ${Math.round(delay)}ms... (Attempt ${i + 1}/${retries})`
+        );
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
+      console.error('Gemini API Error Details:', e);
       break;
     }
   }
@@ -153,9 +264,17 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
   console.warn("Gemini API Failed after retries:", lastError);
   let finalMsg = lastError?.message || lastError?.error?.message || "AI 服務暫時無法使用，請稍後再試 (Service Unavailable)。";
   
-  // 針對 ERR_INTERNET_DISCONNECTED (Failed to fetch) 提供友善的繁體中文提示
-  if (finalMsg.toLowerCase().includes('failed to fetch')) {
-    finalMsg = "網路連線中斷或不穩定，無法連線至 AI 伺服器。請檢查您的 Wi-Fi 或行動網路狀態後再試一次。";
+  // 針對 ERR_INTERNET_DISCONNECTED、ERR_CONNECTION_CLOSED 等（Failed to fetch）提供友善的繁體中文提示
+  const finalLower = finalMsg.toLowerCase();
+  if (
+    finalLower.includes('failed to fetch') ||
+    finalLower.includes('connection closed') ||
+    finalLower.includes('err_connection') ||
+    finalLower.includes('networkerror') ||
+    finalLower.includes('load failed')
+  ) {
+    finalMsg =
+      '網路連線中斷、不穩定，或與 AI 伺服器之連線被重置（例如防火牆／代理）。請檢查網路、VPN／代理設定，或稍後再試；若僅特定模型失敗，可在 .env 設定 VITE_GEMINI_PRO_MODEL 改試其他模型。';
   }
   
   throw new Error(finalMsg);
@@ -236,9 +355,54 @@ function safeJsonParse(text: string | null | undefined): any {
 
 const STEM_KEYWORDS = ['數學', '物理', '化學', '生物', '自然', 'Math', 'Physics', 'Chemistry', 'Biology', 'Science', '數甲', '數A', '數B'];
 
-export async function transcribeHandwrittenImages(images: string[], mode: 'question' | 'answer' = 'answer', isVisualGraphingTask: boolean = false): Promise<string> {
-  if (!images || images.length === 0) return "";
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+/** 與 transcribeHandwrittenImages 內 data URL 解析邏輯一致（供 Phase 3 多模態附圖） */
+function dataUrlToInlinePart(dataUrl: string): { inlineData: { mimeType: string; data: string } } {
+  const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (matches && matches.length === 3) {
+    let mimeType = matches[1];
+    if (mimeType === 'application/octet-stream') {
+      mimeType = 'image/jpeg';
+    }
+    return { inlineData: { mimeType, data: matches[2] } };
+  }
+  return { inlineData: { mimeType: 'image/jpeg', data: dataUrl.split(',')[1] || dataUrl } };
+}
+
+/**
+ * 數學 A／數學甲／數學 B／物理：Phase 3／標準詳解多模態附圖 + 題目圖 OCR 圖形詳述。
+ * 新增科目 id 時請同步更新 components/GradingWorkflow.tsx 的 GEOMETRY_PREFETCH_SUBJECT_IDS。
+ */
+const MATH_VISION_PHASE3_SUBJECT_IDS = new Set([
+  'ast-math-a',
+  'gsat-math-a',
+  'gsat-math-b',
+  'ast-physics',
+  'ast-chemistry',
+]);
+
+export type ModeratorVisionImages = {
+  question?: string[];
+  reference?: string[];
+  student?: string[];
+};
+
+export async function transcribeHandwrittenImages(
+  images: string[],
+  mode: 'question' | 'answer' = 'answer',
+  isVisualGraphingTask: boolean = false,
+  subject?: Pick<Subject, 'id' | 'name'> | null,
+): Promise<string> {
+  if (!images || images.length === 0) {
+    // #region agent log
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H3',location:'geminiService.ts:transcribeHandwrittenImages',message:'empty images array',data:{mode,subjectId:subject?.id??null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return "";
+  }
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  // #region agent log
+  const first = images[0] ? String(images[0]) : '';
+  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1-H3',location:'geminiService.ts:transcribeHandwrittenImages:entry',message:'transcribe start',data:{mode,subjectId:subject?.id??null,imageCount:images.length,firstUrlPrefix:first.slice(0,48),looksLikeDataUrl:first.startsWith('data:')},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   
   // 動態解析 Data URL
   const parts: any[] = images.map(dataUrl => {
@@ -271,18 +435,48 @@ export async function transcribeHandwrittenImages(images: string[], mode: 'quest
     parts.push({ text: prompt });
     try {
       const result = await generateContentWithRetry(ai, {
-        model: 'gemini-3.1-pro-preview', // Use highest vision model for visual tasks
+        model: GEMINI_PRO_MODEL, // Use highest vision model for visual tasks
         contents: { parts }
       }, 3, 2000);
-      return result.text || "";
+      const t = result.text || "";
+      // #region agent log
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:visualExit',message:'visual task result',data:{outLen:t.length,outPreview:t.slice(0,280)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return t;
     } catch (e) {
       console.warn("Visual Graphing Task failed, returning empty string.", e);
+      // #region agent log
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H4',location:'geminiService.ts:transcribeHandwrittenImages:visualCatch',message:'visual task failed',data:{err:String((e as Error)?.message||e)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       return "";
     }
   }
   
   let prompt = "";
   if (mode === 'question') {
+    const mathFigureAddendum =
+      subject?.id && MATH_VISION_PHASE3_SUBJECT_IDS.has(subject.id)
+        ? `
+      6. **圖形與塗色區 — 可重繪級描述（數學 A／數學甲／數學 B，CRITICAL）**  
+         在完整抄錄題幹印刷文字之後，另起「【圖形描述】」，目標是讓後續**依文字重繪的示意圖**在**點線連接關係、相對方位、塗色區邊界**上與原圖**盡量一致**；僅寫可見事實，但**資訊量要足以定出拓扑與相對位置**。
+         **忠實度**：
+         - **禁止臆測**：不得新增圖中未畫出的線、點、塗色邊界；不得捏造題目未給的邊長／角度數值。
+         - **不確定須標示**：無法唯一判定的交點或邊界，寫「無法從圖中唯一判定」並列出可見的兩種以上可能。
+         - **代號一致**：圖上無標記時，自訂點名（建議：外框頂點依**順時針**由**最上端或最左端之頂點**起編 V1,V2,…；中心 O；交點 P1,P2,…），**全文同一套代號**。
+         **必須依下列小標分段輸出（有圖幾何時不可省略；若某段不適用請寫「無」並說明）**：
+         - **6a【外框與定向】**：外框類型（如正六邊形）；在畫面中的**定向**（例如「一頂點朝上、底邊大致水平」「一組對邊呈水平」）；與畫面邊緣的相對關係（置中／偏某側）。
+         - **6b【點位清單】**：列出**每一個**在圖中扮演角色的點：外框頂點、中心、線段交點、塗色區角點。每一點用**一條編號列**寫明：(1) 代號 (2) 類型 (3) **相對位置**：至少一句以**圖心 O** 或**某一外框頂點**為參考的方位（正上／右上／正左／…），若該點在某線段上須寫「落在線段 Vi–Vj 上（或介於兩端之間／與端點重合）」；(4) 若為兩線交點，寫「直線(或線段) Va–Vb 與 Vc–Vd 的交點」。
+         - **6c【邊線清單】**：逐條列出**圖中畫出的**線段（含外框邊與內部對角線／弦），格式「邊k：端點 Vi–Vj；肉眼可辨方向（水平／鉛直／斜向）；是否通過 O」。
+         - **6d【交點清單】**：凡內部線段彼此相交處，逐條寫「交點 Pm：邊 a 與邊 b 相交；Pm 相對 O 或相對最近外框頂點的方位」。
+         - **6e【點對相對位置（重繪用）】**：對**塗色區頂點**與**中心 O**，任取兩點 A、B，若圖中可辨，補一句「A 在 B 的哪一方位（如東北、正下方）」；至少覆蓋塗色區邊界上**相鄰頂點對**與「各頂點—O」的關係。
+         - **6f【塗色區】**：塗色封閉區域；邊界須給**封閉頂點環**（明訂順時針或逆時針）如 V1→O→P2→P1→V1；並說明該區在整圖中的位置（如「中心左側」「上半兩三角形之一」等可見描述）。
+         - **6g【對稱與特殊線】**：若存在明顯對稱軸、過中心的直徑、水平／鉛直中線，逐條指出由哪些點連成。
+         - **6h【函數／座標圖】**（若適用）：軸名與正方向、可讀刻度、曲線與區域邊界。
+         - **6i【與題幹數字】**：題目數值對應哪個整體圖形（如整個正六邊形面積），不要求計算塗色面積。
+         **6j【相對座標草模（選用，非題目條件）】**：若外框為**正多邊形**且無印刷座標，可另起一段並**開頭聲明**「以下僅為重繪用假設座標，假設中心為原點、某一可見頂點在正上方，外接半徑取 1」；列出各點的**近似極角或象限＋相鄰關係**，且**不得與 6b–6f 的拓扑矛盾**。若無法安全給出則整段省略。
+         禁止只輸出題幹一句；有非平凡幾何時，**【圖形描述】總長須足以讓人不重看原圖也能畫出等拓扑草圖**。
+    `
+        : '';
     prompt = `
       Role: Professional OCR Specialist (Chinese & STEM).
       Task: Transcribe the exam question image into text.
@@ -293,12 +487,13 @@ export async function transcribeHandwrittenImages(images: string[], mode: 'quest
       3. **Math/Science**: Use LaTeX format for all formulas (wrapped in $$).
       4. **Structure**: Preserve question numbers (1, 2, (1), (2)) and option lists (A, B, C, D).
       5. **Language**: Primarily Traditional Chinese (繁體中文).
+      ${mathFigureAddendum}
     `;
   } else {
-    // Optimized for Chinese Composition Handwriting
+    // 學生手寫作答：維持先前版本（統一手寫辨識提示），避免強制 LaTeX／array 導致版面混亂；Phase 3 仍可依圖與文字綜合批改。
     prompt = `
       Role: Expert Traditional Chinese Handwriting Recognizer (繁體中文手寫辨識專家).
-      Task: Transcribe the student's handwritten essay image into pure text.
+      Task: Transcribe the student's handwritten answer image into pure text.
       
       **CRITICAL OPTIMIZATION RULES:**
       1. **Context-Aware Correction**: If a character is scribbled, cursive, or ambiguous, use the sentence context to identify the correct Traditional Chinese character.
@@ -313,17 +508,28 @@ export async function transcribeHandwrittenImages(images: string[], mode: 'quest
 
   try {
     const result = await generateContentWithRetry(ai, {
-      model: 'gemini-3.1-pro-preview', 
+      model: GEMINI_PRO_MODEL,
       contents: { parts }
     }, 3, 2000);
-    return result.text || "";
+    const t = result.text || "";
+    // #region agent log
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:ocrOk',message:'ocr result',data:{mode,subjectId:subject?.id??null,outLen:t.length,outPreview:t.slice(0,320)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return t;
   } catch (e) {
-    console.warn("OCR Flash failed, retrying with 2.5...");
+    console.warn(`OCR (${GEMINI_PRO_MODEL}) failed, retrying...`, e);
+    // #region agent log
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H4',location:'geminiService.ts:transcribeHandwrittenImages:ocrRetry',message:'ocr first attempt failed',data:{mode,err:String((e as Error)?.message||e)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const result = await generateContentWithRetry(ai, {
-      model: 'gemini-3.1-pro-preview',
+      model: GEMINI_PRO_MODEL,
       contents: { parts }
     }, 2, 2000);
-    return result.text || "";
+    const t2 = result.text || "";
+    // #region agent log
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:ocrRetryOk',message:'ocr after retry',data:{mode,outLen:t2.length,outPreview:t2.slice(0,320)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return t2;
   }
 }
 
@@ -338,11 +544,11 @@ export async function transcribeChineseGroup(q: string[], r: string[], s: string
 
 // We use JSON Schema enforcement here for robust parsing
 export async function runLinguisticAudit(content: string, subjectName: string, instructions: string): Promise<LinguisticAudit> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
   const prompt = `Role: Linguistic Auditor (Phase 1). Subject: ${subjectName}. Instructions: ${instructions}. Analyze structural integrity. Content: ${content}`;
   
   const result = await generateContentWithRetry(ai, {
-    model: 'gemini-3.1-pro-preview',
+    model: GEMINI_PRO_MODEL,
     contents: prompt,
     config: { 
         responseMimeType: "application/json",
@@ -361,11 +567,11 @@ export async function runLinguisticAudit(content: string, subjectName: string, i
 }
 
 export async function runSubjectExpertAnalysis(content: string, subjectName: string, instructions: string): Promise<SubjectExpertAnalysis> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
   const prompt = `Role: Subject Matter Expert (Phase 2). Subject: ${subjectName}. Instructions: ${instructions}. Analyze depth and reasoning. Content: ${content}`;
   
   const result = await generateContentWithRetry(ai, {
-    model: 'gemini-3.1-pro-preview',
+    model: GEMINI_PRO_MODEL,
     contents: prompt,
     config: { 
         responseMimeType: "application/json",
@@ -382,8 +588,16 @@ export async function runSubjectExpertAnalysis(content: string, subjectName: str
   return safeJsonParse(result.text);
 }
 
-export async function runModeratorSynthesis(content: string, subjectName: string, audit: LinguisticAudit, expert: SubjectExpertAnalysis, instructions: string): Promise<ModeratorSynthesis> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export async function runModeratorSynthesis(
+  content: string,
+  subjectName: string,
+  audit: LinguisticAudit,
+  expert: SubjectExpertAnalysis,
+  instructions: string,
+  subjectId?: string,
+  visionImages?: ModeratorVisionImages
+): Promise<ModeratorSynthesis> {
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
   const strategy = StrategyFactory.getStrategy(subjectName);
   
   let prompt: string;
@@ -402,6 +616,47 @@ export async function runModeratorSynthesis(content: string, subjectName: string
   } else {
     prompt = strategy.generatePrompt!(content, audit, expert, instructions);
   }
+
+  const visionPrefix =
+    '【多模態參考影像】以下依序為：(1) 題目圖片 (2) 詳解／參考圖片 (3) 學生作答圖片。各區塊可能含多張圖，請與下方 OCR／轉錄文字互相對照。\n\n';
+  const hasVisionUrls =
+    !!visionImages &&
+    ((visionImages.question?.length ?? 0) > 0 ||
+      (visionImages.reference?.length ?? 0) > 0 ||
+      (visionImages.student?.length ?? 0) > 0);
+  const useMultimodal =
+    !!subjectId &&
+    MATH_VISION_PHASE3_SUBJECT_IDS.has(subjectId) &&
+    hasVisionUrls;
+
+  let contents: string | { parts: any[] };
+  if (useMultimodal && visionImages) {
+    const parts: any[] = [];
+    const pushNonEmpty = (urls: string[] | undefined) => {
+      if (!urls) return;
+      for (const u of urls) {
+        if (u && String(u).trim()) parts.push(dataUrlToInlinePart(u));
+      }
+    };
+    pushNonEmpty(visionImages.question);
+    pushNonEmpty(visionImages.reference);
+    pushNonEmpty(visionImages.student);
+    parts.push({ text: visionPrefix + prompt });
+    contents = { parts };
+  } else {
+    contents = prompt;
+  }
+
+  const promptForTimeout =
+    typeof contents === 'string' ? contents : visionPrefix + prompt;
+
+  // #region agent log
+  const inlinePartCount =
+    typeof contents === 'object' && contents && 'parts' in contents
+      ? Math.max(0, (contents as { parts: unknown[] }).parts.length - 1)
+      : 0;
+  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H2',location:'geminiService.ts:runModeratorSynthesis:contents',message:'phase3 payload shape',data:{subjectId:subjectId??null,subjectName,useMultimodal,hasVisionUrls,inlinePartCount,contentLen:content.length,contentPreview:content.slice(0,400)},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   
   const baseConfig = {
     responseMimeType: "application/json" as const,
@@ -434,6 +689,11 @@ export async function runModeratorSynthesis(content: string, subjectName: string
               type: Type.OBJECT,
               properties: {
                 sub_id: { type: Type.STRING },
+                key_molecules_smiles: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: '該小題重要分子之 SMILES；無則 []',
+                },
                 setup: { type: Type.NUMBER },
                 process: { type: Type.NUMBER },
                 result: { type: Type.NUMBER },
@@ -522,6 +782,8 @@ export async function runModeratorSynthesis(content: string, subjectName: string
                           },
                           svgCode: { type: Type.STRING },
                           cid: { type: Type.STRING },
+                          smiles: { type: Type.STRING, nullable: true, description: 'mol3d 等用 SMILES' },
+                          title: { type: Type.STRING, nullable: true, description: '圖表或 3D 標題' },
                         },
                       },
                     },
@@ -538,6 +800,8 @@ export async function runModeratorSynthesis(content: string, subjectName: string
               properties: {
                 name: { type: Type.STRING, description: 'PubChem 可搜尋的化合物名稱（英文或繁體中文）' },
                 formula: { type: Type.STRING, description: '化學式，例如 H2SO4、C6H12O6' },
+                smiles: { type: Type.STRING, nullable: true, description: '標準 SMILES，供結構式與 3D' },
+                english_name: { type: Type.STRING, nullable: true, description: 'IUPAC 或精確英文名，供 PubChem name 查詢' },
               },
               required: ['name'],
             },
@@ -549,21 +813,22 @@ export async function runModeratorSynthesis(content: string, subjectName: string
 
   let result;
   try {
-    // Primary: Pro (FAIL FAST: 1 retry only). If it's busy or timeout, swap to Flash.
+    // Primary: Pro；允許數次重試以消化 429/503，再交由 withTimeout 處理長時間推理
     result = await withTimeout(
       generateContentWithRetry(ai, {
-        model: 'gemini-3.1-pro-preview',
-        contents: prompt,
+        model: GEMINI_PRO_MODEL,
+        contents,
         config: baseConfig,
-      }, 1, 1000),
-      getProTimeoutMs(prompt)
+      }, 3, 2000),
+      getProTimeoutMs(promptForTimeout)
     );
   } catch (e) {
-    console.warn("Moderator Synthesis (Pro) failed/busy, failing over to Flash...", e);
+    const fallbackReason = e instanceof Error ? e.message : String(e);
+    console.warn('[runModeratorSynthesis] Pro 逾時或失敗，改以 Flash 模型重試:', fallbackReason);
     // Fallback: Flash (High persistence: 4 retries)
     result = await generateContentWithRetry(ai, {
-      model: 'gemini-3.1-pro-preview',
-      contents: prompt,
+      model: GEMINI_FLASH_FALLBACK_MODEL,
+      contents,
       config: baseConfig,
     }, 4, 2000);
   }
@@ -594,17 +859,26 @@ export async function runModeratorSynthesis(content: string, subjectName: string
   }
 
   if (parsed) {
-    console.log('[runModeratorSynthesis] stem_sub_results viz:', parsed.stem_sub_results?.map((s: any) => ({ id: s.sub_id, hasViz: !!s.visualization_code, vizCode: s.visualization_code })));
     if (!parsed.detailed_fixes) parsed.detailed_fixes = [];
     if (!parsed.ceec_results) parsed.ceec_results = { total_score: 0, breakdown: {} };
     if (!parsed.stem_sub_results) parsed.stem_sub_results = [];
+    else if (!Array.isArray(parsed.stem_sub_results)) parsed.stem_sub_results = [parsed.stem_sub_results];
     if (!parsed.growth_roadmap) parsed.growth_roadmap = [];
+    for (const sub of parsed.stem_sub_results as { key_molecules_smiles?: unknown }[]) {
+      if (!Array.isArray(sub.key_molecules_smiles)) sub.key_molecules_smiles = [];
+    }
   }
   return parsed;
 }
 
-export async function generateReferenceSolution(content: string, subjectName: string, instructions: string): Promise<ModeratorSynthesis> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export async function generateReferenceSolution(
+  content: string,
+  subjectName: string,
+  instructions: string,
+  subjectId?: string,
+  visionImages?: ModeratorVisionImages
+): Promise<ModeratorSynthesis> {
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
   
   const isComposition = ['國文', 'Chinese', '英文', 'English', '作文'].some(k => subjectName.includes(k));
 
@@ -631,6 +905,10 @@ export async function generateReferenceSolution(content: string, subjectName: st
     ${isComposition 
       ? 'Do not generate visualizations for composition tasks.'
       : `For STEM subjects (Math, Physics, Chemistry, Biology, Earth Science), you MUST generate a 3D Interactive Plot using \`plotly_chart\` to illustrate the concepts (e.g., force vectors, molecular structures, geometric shapes).
+
+    **3D geometry correctness (CRITICAL)**:
+    - For a **right circular cone**, use \`mesh3d\` with a circular base (many vertices around the circle, e.g. 48 segments) plus apex—never approximate a cone with only a 4-vertex tetrahedron.
+    - For a **surface of revolution** (e.g. rotating a curve around the x-axis), include BOTH a \`scatter3d\` trace for the generatrix AND a semi-transparent \`mesh3d\` for the swept surface (adequate resolution in both x and angle).
     
     **JSON Structure**:
     "visualization_code": {
@@ -667,28 +945,70 @@ export async function generateReferenceSolution(content: string, subjectName: st
       "corrected_article": "Optional: Full Model Essay text if applicable."
     }
     `;
+
+  const visionPrefix =
+    '【多模態參考影像】以下依序為：(1) 題目圖片 (2) 詳解／參考圖片 (3) 學生作答圖片。各區塊可能含多張圖，請與下方 OCR／轉錄文字互相對照。\n\n';
+  const hasVisionUrls =
+    !!visionImages &&
+    ((visionImages.question?.length ?? 0) > 0 ||
+      (visionImages.reference?.length ?? 0) > 0 ||
+      (visionImages.student?.length ?? 0) > 0);
+  const useRefMultimodal =
+    !!subjectId &&
+    MATH_VISION_PHASE3_SUBJECT_IDS.has(subjectId) &&
+    hasVisionUrls;
+
+  let refContents: string | { parts: any[] };
+  if (useRefMultimodal && visionImages) {
+    const parts: any[] = [];
+    const pushNonEmpty = (urls: string[] | undefined) => {
+      if (!urls) return;
+      for (const u of urls) {
+        if (u && String(u).trim()) parts.push(dataUrlToInlinePart(u));
+      }
+    };
+    pushNonEmpty(visionImages.question);
+    pushNonEmpty(visionImages.reference);
+    pushNonEmpty(visionImages.student);
+    parts.push({ text: visionPrefix + prompt });
+    refContents = { parts };
+  } else {
+    refContents = prompt;
+  }
+  const refPromptForTimeout =
+    typeof refContents === 'string' ? refContents : visionPrefix + prompt;
+
+  // #region agent log
+  const refInlineCount =
+    typeof refContents === 'object' && refContents && 'parts' in refContents
+      ? Math.max(0, (refContents as { parts: unknown[] }).parts.length - 1)
+      : 0;
+  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'post-fix',hypothesisId:'REF_VISION',location:'geminiService.ts:generateReferenceSolution:contents',message:'reference solution payload',data:{subjectId:subjectId??null,useRefMultimodal,refInlineCount,contentLen:content.length},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   
   try {
-      // Fail Fast on Pro (1 retry), with dynamic timeout
+      // 標準詳解常含長篇 JSON／圖表：Pro 等待時間至少 3 分鐘，降低不必要降級 Flash
+      const proWaitMs = Math.max(getProTimeoutMs(refPromptForTimeout), 180_000);
       const result = await withTimeout(
         generateContentWithRetry(ai, {
-          model: 'gemini-3.1-pro-preview',
-          contents: prompt,
+          model: GEMINI_PRO_MODEL,
+          contents: refContents,
           config: { 
             responseMimeType: "application/json",
             systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
             temperature: 0.2
           }
         }, 1, 1000),
-        getProTimeoutMs(prompt)
+        proWaitMs
       );
       return safeJsonParse(result.text) || {};
   } catch (e) {
-      // Fallback to Flash (4 retries)
-      console.warn("Reference Solution (Pro) failed, retrying with Flash...", e);
+      if (import.meta.env.DEV) {
+        console.debug('[generateReferenceSolution] Pro 逾時或失敗，改以 Flash 模型重試', e);
+      }
       const result = await generateContentWithRetry(ai, {
-        model: 'gemini-3.1-pro-preview',
-        contents: prompt,
+        model: GEMINI_FLASH_FALLBACK_MODEL,
+        contents: refContents,
         config: { 
           responseMimeType: "application/json",
           systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
@@ -703,7 +1023,7 @@ export async function analyzeChineseSection(
   subQuestions: ChineseTaskContent[],
   instructions?: string
 ): Promise<SectionResult> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
   const sectionResults: any[] = [];
   let totalSectionScore = 0;
 
@@ -799,17 +1119,16 @@ export async function analyzeChineseSection(
             // prompt 已在此迴圈內組好（含 q.question, q.student, instructions 等），傳入 getProTimeoutMs 計算正確
             res = await withTimeout(
                 generateContentWithRetry(ai, {
-                    model: 'gemini-3.1-pro-preview',
+                    model: GEMINI_PRO_MODEL,
                     contents: prompt,
                     config: { responseMimeType: "application/json" }
                 }, 1, 1000),
                 getProTimeoutMs(prompt)
             );
         } catch (e) {
-            console.warn(`Sub-question ${i} (Pro) failed, falling back to Flash.`, e);
-            // Fallback to Flash (Robust: 4 retries)
+            console.info(`[analyzeChineseSection] 子題 ${i + 1} Pro 逾時或失敗，改以 Flash 重試`);
             res = await generateContentWithRetry(ai, {
-                model: 'gemini-3.1-pro-preview',
+                model: GEMINI_FLASH_FALLBACK_MODEL,
                 contents: prompt,
                 config: { responseMimeType: "application/json" }
             }, 4, 2000);
@@ -888,7 +1207,7 @@ export async function sendChatToGemini(messages: ChatTurn[]): Promise<string> {
   if (!messages || messages.length === 0) {
     throw new Error('訊息列表不得為空。');
   }
-  const ai = new GoogleGenAI({ apiKey: String(apiKey).trim() });
+  const ai = createGeminiAi(apiKey);
 
   const contents = messages.map((m) => ({
     role: m.role === 'user' ? 'user' : 'model',
@@ -898,7 +1217,7 @@ export async function sendChatToGemini(messages: ChatTurn[]): Promise<string> {
   const result = await generateContentWithRetry(
     ai,
     {
-      model: 'gemini-3.1-pro-preview',
+      model: GEMINI_PRO_MODEL,
       contents,
       config: {
         systemInstruction: SUPPORT_SYSTEM_INSTRUCTION,
@@ -996,7 +1315,7 @@ export async function fetchGeneratedImage(prompt: string): Promise<string> {
 }
 
 export async function getChineseOverallRemarks(sections: SectionResult[]): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
   const content = JSON.stringify(sections.map(s => ({ 
     title: s.section_title, 
     score: s.total_section_score, 
@@ -1004,7 +1323,7 @@ export async function getChineseOverallRemarks(sections: SectionResult[]): Promi
   })));
   
   const result = await generateContentWithRetry(ai, {
-    model: 'gemini-3.1-pro-preview',
+    model: GEMINI_PRO_MODEL,
     contents: `你是閱卷主席。根據以下國寫各題評分結果，撰寫一段精簡的總體評語(100字內，繁體中文)。輸入資料: ${content}`,
   }, 3, 2000);
   return result.text || "無法產生總評";

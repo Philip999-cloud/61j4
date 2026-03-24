@@ -1,14 +1,10 @@
 /**
- * Canvas getContext 白名單 patch：僅對 Ketcher 等需頻繁讀取的套件加上 willReadFrequently，
- * 避免 GPU Canvas（3D、動畫）被降級為 CPU 軟體渲染。
+ * Canvas getContext patch：對所有 2D 內容加上 willReadFrequently。
+ * Plotly／Ketcher／RDKit(Cairo WASM) 會在初始化或離屏階段建立 canvas，此時尚不在
+ * [data-asea-will-read-frequently] 等白名單祖先下；僅對「已掛上樹」畫布套白名單仍會觸發
+ * Chrome「Multiple readback operations… willReadFrequently」警告。
  */
-export function isWillReadFrequentlyCanvas(canvas: HTMLCanvasElement): boolean {
-  return !!(
-    canvas.closest('[data-asea-will-read-frequently]') ||
-    canvas.closest('[data-ketcher-editor]') ||
-    canvas.closest('[data-ketcher-fullscreen-container]')
-  );
-}
+type GetContextFn = typeof HTMLCanvasElement.prototype.getContext;
 
 export function applyCanvasPatch(): () => void {
   const origGetContext = HTMLCanvasElement.prototype.getContext;
@@ -17,13 +13,29 @@ export function applyCanvasPatch(): () => void {
     id: string,
     opts?: CanvasRenderingContext2DSettings,
   ) {
-    if (id === '2d' && isWillReadFrequentlyCanvas(this)) {
+    if (id === '2d') {
       opts = Object.assign({ willReadFrequently: true }, opts || {});
     }
     return origGetContext.call(this, id, opts);
-  } as typeof origGetContext;
+  } as GetContextFn;
+
+  let restoreOffscreen: (() => void) | undefined;
+  const OC = typeof globalThis !== 'undefined' ? (globalThis as { OffscreenCanvas?: typeof OffscreenCanvas }).OffscreenCanvas : undefined;
+  if (OC?.prototype?.getContext) {
+    const origOc = OC.prototype.getContext as GetContextFn;
+    OC.prototype.getContext = function (this: OffscreenCanvas, id: string, opts?: CanvasRenderingContext2DSettings) {
+      if (id === '2d') {
+        opts = Object.assign({ willReadFrequently: true }, opts || {});
+      }
+      return origOc.call(this, id, opts);
+    } as GetContextFn;
+    restoreOffscreen = () => {
+      OC.prototype.getContext = origOc;
+    };
+  }
 
   return () => {
     HTMLCanvasElement.prototype.getContext = origGetContext;
+    restoreOffscreen?.();
   };
 }

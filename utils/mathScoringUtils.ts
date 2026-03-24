@@ -151,6 +151,12 @@ export const transformToMathSteps = (subResult: StemSubScore, subjectName: strin
   return [definitionStep, processStep, resultStep];
 };
 
+/** 與 AstMathAStrategy「Actual score」同源：分桶上限後的得分，供 ResultsDisplay 總分對齊。 */
+export const getStemSubAchievedPoints = (subResult: StemSubScore, subjectName: string = ''): number => {
+  const steps = transformToMathSteps(subResult, subjectName);
+  return calculateStepwiseScore(Array.isArray(steps) ? steps : []);
+};
+
 export const getStepColor = (type: MathStepType, isAchieved: boolean) => {
   if (!isAchieved) return 'bg-zinc-800 text-zinc-500 border-zinc-700/50';
   

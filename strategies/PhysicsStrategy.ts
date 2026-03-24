@@ -95,11 +95,11 @@ export class PhysicsStrategy implements GradingStrategy {
     - **Multiplication**: Use \`\\\\times\` or \`\\\\cdot\`. Do NOT use \`*\`.
     - **Spacing**: Use \`~\` for spacing between numbers and units.
 
-    3. **VISUALIZATION ENGINE: PLOTLY.JS (3D)**
-    For Physics problems (Kinematics, Dynamics, Gravitation, Energy), you **MUST** generate a **3D Interactive Plot** using \`plotly_chart\`.
-    
-    **DIAGRAM CLARITY (CRITICAL)**: Ensure all plot traces are highly visible. Use line width >= 4, and marker size >= 8. Use high contrast colors.
-    
+    3. **VISUALIZATION ENGINE: ADAPTIVE VISUALIZATION**
+    Choose the correct engine per problem type. All rules below complement the **PHYSICS SVG SUB-DOMAIN ROUTING** block above.
+
+    **CASE B (3D Kinematics, Dynamics, Gravitation, Energy, vector fields in space)**: You **MUST** use \`plotly_chart\` with 3D traces (\`scatter3d\`, \`mesh3d\`, etc.). Do NOT use flat PNG snapshots.
+    **DIAGRAM CLARITY (CRITICAL)**: Line width >= 4, marker size >= 8, high contrast colors.
     **JSON Structure**:
     "visualization_code": {
        "explanation": "Brief physics explanation of the visual...",
@@ -111,7 +111,36 @@ export class PhysicsStrategy implements GradingStrategy {
        }]
     }
 
-    # 🌌 3D SCENARIO TEMPLATES (COPY & ADAPT) 🌌
+    **CASE C (Mechanics / Geometry / Circuits / Optics — 2D instructional diagrams)**: For free-body diagrams (FBD), pulleys, inclined planes, optics (lenses, mirrors, ray paths), or electric circuits, you **MUST** use \`svg_diagram\`. Generate pure, scalable \`<svg viewBox="...">...</svg>\` code in \`svgCode\`. **DO NOT** use raster images. Use standard scientific colors; follow the sub-domain SVG rules injected above (MECHANICS / ELECTROMAGNETISM / OPTICS / THERMO as applicable).
+
+    **CASE E (Prohibition — ZERO EXCEPTIONS)**: **ABSOLUTELY NO** PNG, JPG, WebP, or Base64-encoded raster images in \`visualization_code\` or feedback. All visual output must be **mathematical / data charts** (\`plotly_chart\`, etc.) or **vector** (\`svg_diagram\`, \`python_plot\` with SVG from the sandbox). No fake image URLs.
+
+    **Universal 2D / function plots (align with Math STEM)**: If the **question image** contains a drawn **regular polygon** to reproduce, use \`geometry_json\` with **GEOMETRIC PRECISION PROTOCOL v4** (\`solver_mode\`, topology only). For other metric figures use full \`geometry_json\` with coordinates (v3-style), not \`python_script\`. For **self-authored** 2D diagrams, \`svg_diagram\` in \`svgCode\`. Explicit function graphs → prefer \`python_plot\` **only if** you output full fields: \`func_str\` (X,Y,np), \`x_range\`, \`y_range\`, optional \`plot_mode\`; otherwise use \`plotly_chart\`. Scoring fields must remain unchanged.
+
+    # ════════════════════════════════════════════════════════════
+    # GEOMETRIC PRECISION PROTOCOL v4 — TOPOLOGY-ONLY EXTRACTION
+    # ABSOLUTE OVERRIDE: applies to drawn regular polygons in the question image
+    # ════════════════════════════════════════════════════════════
+
+    The rendering system has a mathematical solver for **regular** polygons: **no x,y** in JSON for those.
+
+    ## REGULAR POLYGON (e.g. hexagon with diagonals / shaded region):
+    \`visualization_code.visualizations[]\`: \`"type": "geometry_json"\`, \`"code"\` = JSON with:
+    \`solver_mode\`: \`"regular_polygon"\`, \`polygon_sides\`, \`canvas_width\`/\`height\` (e.g. 480), \`diagonal_topology\`, optional \`specific_diagonals\`, \`shaded_region\` with \`boundary_lines\` as vertex pairs, \`vertex_labels\`, \`figure_in_coordinate_system\`.
+
+    ### ABSOLUTE RULES:
+    1. NEVER \`python_script\` for these figures.
+    2. For regular polygons: topology only; solver computes coordinates.
+    3. For non-regular figures (circuits, rays, irregular shapes): full geometry_json with coordinates and axis rules as before.
+    4. If the **question text** states shaded vs total area, add \`numeric_constraints\` (\`shaded_to_total_ratio\` or math areas) on the solver payload — **prefer that** over guessing \`boundary_lines\` from the image.
+
+    **3D or time-varying physics**: still use \`plotly_chart\` as CASE B above. **Pure algebra with no figure**: unchanged.
+
+    # ════════════════════════════════════════════════════════════
+    # END GEOMETRIC PRECISION PROTOCOL v4
+    # ════════════════════════════════════════════════════════════
+
+    # 🌌 3D SCENARIO TEMPLATES (COPY & ADAPT) — CASE B 🌌
 
     **SCENARIO A: Projectile Motion (拋體運動)**
     *Goal: Show trajectory, velocity vector, and ground.*
@@ -166,11 +195,16 @@ export class PhysicsStrategy implements GradingStrategy {
     2. Phase 1 Audit: ${JSON.stringify(audit)}
     3. Phase 2 Expert Analysis: ${JSON.stringify(expert)}
 
+    # FIELD DEFINITIONS (CRITICAL)
+    Before generating the JSON, you MUST adhere to these exact rules for specific fields:
+    - "max_points": MUST be the exact total points extracted from the question text (e.g., 4, 5, 10). DO NOT default to 5.
+    - "setup": Score for concept and equation formulation (觀念/列式得分).
+    - "process": Score for mathematical calculation steps (運算過程得分).
+    - "result": Score for the final correct answer accuracy (答案正確性得分).
+    - "logic": Additional score for logical coherence (邏輯附加分).
+
     # OUTPUT JSON STRUCTURE (STRICT ENFORCEMENT)
-    You MUST output ONLY valid JSON. 
-    **ABSOLUTELY NO MARKDOWN CODE BLOCKS.**
-    
-    Copy and fill out this EXACT structure:
+    CRITICAL: The JSON output below MUST NOT contain any // comments, trailing commas, or markdown code block formatting (like \`\`\`json). Output ONLY the raw JSON string.
 
     {
       "final_score": 0,
@@ -178,15 +212,14 @@ export class PhysicsStrategy implements GradingStrategy {
       "remarks_zh": "整體試卷的主席綜整評語。",
       "growth_roadmap": ["建議..."],
       "detailed_fixes": [],
-      "compounds": [{"name": "化合物名稱", "formula": "化學式"}],
       "stem_sub_results": [
         {
           "sub_id": "題號",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details..."],

@@ -1,9 +1,10 @@
-
 import React, { useState } from 'react';
+import { Check, X } from 'lucide-react';
 import { StemSubScore, MathStep, TextAnnotation, ParsedMathSegment } from '../../types';
 import { transformToMathSteps, calculateStepwiseScore, getStepColor, getStepIcon } from '../../utils/mathScoringUtils';
 import { VisualizationRenderer } from '../VisualizationRenderer';
 import LatexRenderer from '../LatexRenderer';
+import { enhanceTranscriptionMathForLatex } from '../../utils/stemTranscriptionMath';
 
 interface Props {
   data: StemSubScore[];
@@ -37,47 +38,80 @@ const InteractiveMathText: React.FC<{
   const [activeItem, setActiveItem] = useState<{ type: string; explanation: string; correction?: string } | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
-  // Determine content to render: Use segments if available, otherwise parsing from fullText
+  const stripSpaceCmd = (s: string) => s.replace(/\\(v|h)space\{?[a-zA-Z0-9\.\-\\]*\}?/g, ' ').trim();
+
   let contentToRender: { text: string; anno?: TextAnnotation; isError?: boolean; errorReason?: string; correction?: string }[] = [];
 
-  if (segments && segments.length > 0) {
-      contentToRender = segments.map(s => ({
-          text: s.text,
-          isError: s.is_error,
-          errorReason: s.error_reason,
-          correction: s.correction
-      }));
-  } else {
-      const safeText = typeof fullText === 'string' ? fullText : String(fullText || '');
-      const cleanText = safeText.replace(/\\(v|h)space\{?[a-zA-Z0-9\.\-\\]*\}?/g, ' ').trim();
-      let tempSegments: { text: string; anno?: TextAnnotation }[] = [{ text: cleanText }];
+  const safeFullRaw = typeof fullText === 'string' ? fullText : String(fullText || '');
+  const cleanFull = stripSpaceCmd(safeFullRaw);
 
-      if (annotations) {
-        annotations.forEach(anno => {
-            if (!anno.text || anno.text.length < 1) return;
-            const cleanKey = anno.text.replace(/\\(v|h)space\{?[a-zA-Z0-9\.\-\\]*\}?/g, ' ').trim();
-            if (!cleanKey) return;
-            const newSegments: { text: string; anno?: TextAnnotation }[] = [];
-            tempSegments.forEach(seg => {
-            if (seg.anno) {
-                newSegments.push(seg);
-            } else {
-                const parts = typeof seg.text === 'string' ? seg.text.split(cleanKey) : [String(seg.text)];
-                parts.forEach((part, i) => {
-                if (part) newSegments.push({ text: part });
-                if (i < parts.length - 1) {
-                    newSegments.push({ text: cleanKey, anno: anno });
-                }
-                });
-            }
-            });
-            tempSegments = newSegments;
+  if (cleanFull) {
+    type SplitPiece = { text: string; anno?: TextAnnotation; correction?: string; errorReason?: string };
+    const splitKeys: SplitPiece[] = [];
+    if (Array.isArray(annotations)) {
+      for (const anno of annotations) {
+        if (!anno.text || anno.text.length < 1) continue;
+        const ck = stripSpaceCmd(anno.text);
+        if (!ck) continue;
+        splitKeys.push({ text: ck, anno });
+      }
+    }
+    if (Array.isArray(segments)) {
+      for (const seg of segments) {
+        if (!seg.is_error || !seg.text?.trim()) continue;
+        const ck = stripSpaceCmd(seg.text);
+        if (!ck) continue;
+        if (splitKeys.some((k) => k.text === ck)) continue;
+        splitKeys.push({
+          text: ck,
+          anno: {
+            text: ck,
+            type: '錯誤分析',
+            explanation: seg.error_reason || 'Check this step',
+          },
+          correction: seg.correction,
+          errorReason: seg.error_reason,
         });
       }
-      contentToRender = tempSegments.map(s => ({
-          text: s.text,
-          anno: s.anno
-      }));
+    }
+    splitKeys.sort((a, b) => b.text.length - a.text.length);
+
+    let tempSegments: SplitPiece[] = [{ text: cleanFull }];
+    for (const sk of splitKeys) {
+      const newSegments: SplitPiece[] = [];
+      tempSegments.forEach((seg) => {
+        if (seg.anno) {
+          newSegments.push(seg);
+        } else {
+          const parts = typeof seg.text === 'string' ? seg.text.split(sk.text) : [String(seg.text)];
+          parts.forEach((part, i) => {
+            if (part) newSegments.push({ text: part });
+            if (i < parts.length - 1) {
+              newSegments.push({
+                text: sk.text,
+                anno: sk.anno,
+                correction: sk.correction,
+                errorReason: sk.errorReason,
+              });
+            }
+          });
+        }
+      });
+      tempSegments = newSegments;
+    }
+    contentToRender = tempSegments.map((s) => ({
+      text: s.text,
+      anno: s.anno,
+      correction: s.correction,
+      errorReason: s.errorReason,
+    }));
+  } else if (segments && segments.length > 0) {
+    contentToRender = segments.map((s) => ({
+      text: s.text,
+      isError: s.is_error,
+      errorReason: s.error_reason,
+      correction: s.correction,
+    }));
   }
 
   if (contentToRender.length === 0) return null;
@@ -89,17 +123,18 @@ const InteractiveMathText: React.FC<{
            學生原始算式 (Original Calculation)
         </h5>
         
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-3 w-full break-words whitespace-pre-wrap">
+        <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-zinc-800/80 bg-black/20 px-2 py-3 sm:px-4">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-3 w-full min-w-0 break-words whitespace-pre-wrap [&_.katex]:text-[1.05em]">
             {contentToRender.map((seg, i) => {
               if (!seg.text) return null;
-              
-              // Smart Block Detection
-              const isTable = /\\begin\s*\{(array|tabular|[bpvB]matrix|cases|align|gather)\}/.test(seg.text);
-              const isBlock = isTable || seg.text.includes('$$');
-              
+
+              const prepared = enhanceTranscriptionMathForLatex(seg.text);
+              const isTable = /\\begin\s*\{(array|tabular|[bpvB]matrix|cases|align|gather)\}/.test(prepared);
+              const isBlock = isTable || prepared.includes('$$');
+
               const content = (
                  <div className={isBlock ? "w-full overflow-x-auto my-2 block" : "inline-flex items-center"}>
-                    <LatexRenderer content={seg.text} isInline={!isBlock} />
+                    <LatexRenderer content={prepared} isInline={!isBlock} />
                  </div>
               );
 
@@ -133,6 +168,7 @@ const InteractiveMathText: React.FC<{
                  );
               }
             })}
+          </div>
         </div>
   
         {activeItem && (
@@ -159,7 +195,7 @@ const InteractiveMathText: React.FC<{
                    <div className="mt-3 pt-3 border-t border-zinc-700 bg-zinc-900/50 p-3 rounded-lg">
                       <span className="text-[10px] !text-emerald-500 font-bold uppercase block mb-1">Corrected Value:</span>
                       <div className="!text-emerald-300 font-serif">
-                          <LatexRenderer content={activeItem.correction} isInline={true} />
+                          <LatexRenderer content={enhanceTranscriptionMathForLatex(activeItem.correction)} isInline={true} />
                       </div>
                    </div>
                 )}
@@ -176,16 +212,19 @@ const renderAlternativeSolutions = (content: any) => {
   if (!content) return null;
   if (typeof content === 'string') return <LatexRenderer content={content} />;
   
-  const renderItems = (items: any[]) => (
+  const renderItems = (items: any) => {
+    const list = Array.isArray(items) ? items : [];
+    return (
     <div className="space-y-4">
-      {items.map((item, i) => (
+      {list.map((item, i) => (
         <div key={i} className="border-l-2 border-emerald-500/30 pl-4 py-1">
            <div className="text-[10px] font-black text-emerald-500 mb-2 tracking-widest uppercase opacity-70">Method {i+1}</div>
            <LatexRenderer content={typeof item === 'string' ? item : JSON.stringify(item)} />
         </div>
       ))}
     </div>
-  );
+    );
+  };
 
   if (Array.isArray(content)) return renderItems(content);
   if (typeof content === 'object') return renderItems(Object.values(content));
@@ -194,38 +233,42 @@ const renderAlternativeSolutions = (content: any) => {
 };
 
 const ScoreMetric: React.FC<{ label: string; score: number; color: string }> = ({ label, score, color }) => {
-  const isZero = score === 0;
+  const achieved = score > 0;
   const bgClass = color.replace(/text-/g, 'bg-').replace(/500/g, '500/10').replace(/400/g, '400/10');
   const borderClass = color.replace(/text-/g, 'border-').replace(/500/g, '500/20').replace(/400/g, '400/20');
-  
+
   return (
     <div className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-colors ${
-      isZero 
+      !achieved
         ? 'bg-zinc-500/10 border-zinc-500/20 shadow-inner'
         : `${bgClass} ${borderClass}`
     }`}>
-        <span className="text-[9px] font-black uppercase tracking-widest opacity-60 mb-1 text-zinc-500">
+        <span className="text-[9px] font-black uppercase tracking-widest opacity-60 mb-2 text-zinc-500">
           {label}
         </span>
-        <span className={`text-2xl font-black ${
-          isZero 
-            ? 'text-zinc-400 dark:text-zinc-500'
-            : color
-        }`}>
-          {score}
-        </span>
+        {achieved ? (
+          <Check className={`w-6 h-6 mx-auto stroke-[3] ${color}`} />
+        ) : (
+          <X className="w-6 h-6 mx-auto stroke-[3] opacity-50 text-zinc-400 dark:text-zinc-500" />
+        )}
     </div>
   );
 };
 
 const AstMathAStrategy: React.FC<Props> = ({ data, subjectName, originalText, isSolutionOnly }) => {
+  const rows = Array.isArray(data) ? data : [];
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-8 duration-700">
-      {data.map((sub, idx) => {
+      {rows.map((sub, idx) => {
+        if (!sub) return null;
         const steps = transformToMathSteps(sub, subjectName);
+        const safeSteps = Array.isArray(steps) ? steps : [];
 
         // Safe extraction of 4-dimensional scores for detailed view
-        const val = (n: number | undefined) => (typeof n === 'number' && !isNaN(n)) ? n : 0;
+        const val = (n: unknown) => {
+          const x = Number(n ?? 0);
+          return Number.isFinite(x) ? x : 0;
+        };
         const setupScore = val(sub.setup);
         const processScore = val(sub.process);
         const logicScore = val(sub.logic);
@@ -243,10 +286,23 @@ const AstMathAStrategy: React.FC<Props> = ({ data, subjectName, originalText, is
                        {isSolutionOnly ? '標準解析' : '演算流程深度評核'}
                     </h3>
                     {!isSolutionOnly && (
-                       <div className="flex items-center gap-2 text-xs font-medium text-zinc-500">
-                          <span>Max: {sub.max_points}</span>
-                          <span className="text-zinc-700">•</span>
-                          <span>Total Actual: <span className="text-zinc-300">{calculateStepwiseScore(steps)}</span></span>
+                       <div className="mt-2 flex flex-wrap items-end gap-6">
+                          <div>
+                            <div className="text-base font-black tracking-wider uppercase text-zinc-500">
+                              MAX score
+                            </div>
+                            <div className="text-5xl font-black leading-none tabular-nums text-zinc-100">
+                              {sub.max_points}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-base font-black tracking-wider uppercase text-zinc-500">
+                              Actual score
+                            </div>
+                            <div className="text-5xl font-black leading-none tabular-nums text-zinc-100">
+                              {calculateStepwiseScore(safeSteps)}
+                            </div>
+                          </div>
                        </div>
                     )}
                   </div>
@@ -270,12 +326,12 @@ const AstMathAStrategy: React.FC<Props> = ({ data, subjectName, originalText, is
                     <ScoreMetric label="Result (答案)" score={resultScore} color="text-emerald-400" />
                  </div>
                  
-                 <MathProgressBar steps={steps} />
+                 <MathProgressBar steps={safeSteps} />
               </div>
             )}
             
             <div className="space-y-4 relative z-10 mb-8">
-              {steps.map((step, sIdx) => {
+              {safeSteps.map((step, sIdx) => {
                  const colorClass = getStepColor(step.type, isSolutionOnly ? true : step.isAchieved);
                  const icon = getStepIcon(step.type);
                  

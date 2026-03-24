@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
 # postinstall 產生的字型（Vercel 部署時會自動執行 postinstall）
 public/fonts/
 

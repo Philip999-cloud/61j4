@@ -200,7 +200,11 @@ export default function CampbellStyleMuscleDiagram() {
                     <span className="bg-blue-500 w-2 h-6 rounded mr-3"></span>
                     2. 數學聯動：矩陣旋轉
                 </h2>
-                <div id={matrixPlotId} className="w-full h-80 rounded-lg overflow-hidden bg-white/5 shadow-inner"></div>
+                <div
+                  id={matrixPlotId}
+                  data-asea-will-read-frequently
+                  className="w-full h-80 rounded-lg overflow-hidden bg-white/5 shadow-inner"
+                ></div>
             </div>
 
             {/* 區塊 3: 3D 函數 (正交投影) */}
@@ -212,7 +216,11 @@ export default function CampbellStyleMuscleDiagram() {
                 <p className="text-xs text-slate-400 mb-4">
                    使用 <code>orthographic</code> 視角與 <code>mesh3d</code> 光影，消除透視變形，呈現教科書級別的銳利拋物面。
                 </p>
-                <div id={funcPlotId} className="w-full h-80 rounded-lg overflow-hidden bg-white/5 shadow-inner"></div>
+                <div
+                  id={funcPlotId}
+                  data-asea-will-read-frequently
+                  className="w-full h-80 rounded-lg overflow-hidden bg-white/5 shadow-inner"
+                ></div>
             </div>
 
             {/* 區塊 4: 立體幾何 (虛實線) */}
@@ -224,7 +232,11 @@ export default function CampbellStyleMuscleDiagram() {
                 <p className="text-xs text-slate-400 mb-4">
                     精確區分「可見邊 (實線)」與「隱藏邊 (虛線)」，並為特定切面填上高級半透明材質。
                 </p>
-                <div id={geomPlotId} className="w-full h-80 rounded-lg overflow-hidden bg-white/5 shadow-inner"></div>
+                <div
+                  id={geomPlotId}
+                  data-asea-will-read-frequently
+                  className="w-full h-80 rounded-lg overflow-hidden bg-white/5 shadow-inner"
+                ></div>
             </div>
 
         </div>

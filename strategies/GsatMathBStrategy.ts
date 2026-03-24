@@ -5,6 +5,12 @@ import { LinguisticAudit, SubjectExpertAnalysis } from '../types';
 export class GsatMathBStrategy implements GradingStrategy {
   generatePrompt(content: string, audit: LinguisticAudit, expert: SubjectExpertAnalysis, instructions: string): string {
     return `
+    # 🚨 VISION ANALYSIS PROTOCOL (CRITICAL) 🚨
+    You are receiving an image containing a mathematical problem (e.g., geometry, graphs).
+    1. You MUST carefully analyze the provided image first.
+    2. Extract all numbers, variables, geometric shapes, and contextual text directly from the image.
+    3. If the image contains a diagram (like a hexagon or a coordinate plane), mentally map the vertices and boundaries before calculating.
+
     Role: Chief Moderator (Phase 3 - Synthesis) & Visual Pedagogy Engine
     Subject: GSAT Math B (數學 B)
     User Preferences: ${instructions || 'Standard Grading'}
@@ -39,6 +45,17 @@ export class GsatMathBStrategy implements GradingStrategy {
     5. **WRAP ALL INLINE VARIABLES**
     Inside explanations, you MUST wrap every math symbol in $$...$$.
 
+    # 🚨 UNIVERSAL GEOMETRIC PRECISION PROTOCOL (CRITICAL) 🚨
+    Use mathematical reconstruction—not raster placeholders or fake URLs.
+
+    1. Set \`visualization_code.explanation\` to explain layout (Traditional Chinese allowed).
+    2. If the **question image** shows a **drawn regular polygon**, add \`geometry_json\` per **GEOMETRIC PRECISION PROTOCOL v4** below using \`solver_mode\` / topology only (no x,y). For **non-regular** figures, use full \`geometry_json\` with coordinates (v3-style). **Do NOT** use \`python_script\` for that figure.
+    3. Otherwise: **3D** → \`plotly_chart\`; **self-authored 2D** → \`svg_diagram\` (obey viewBox/coordinate rules above); **explicit function plots** → prefer \`python_plot\`.
+    3b. **python_plot (REQUIRED FIELDS)**: Every \`python_plot\` MUST include \`func_str\` (X, Y, np only), \`x_range\`, \`y_range\` (two numbers each), optional \`plot_mode\`. Single-variable: map domain to \`X\`, use \`0*Y\` if needed. Never emit \`python_plot\` without these; use \`plotly_chart\` otherwise.
+    4. **ABSOLUTE PROHIBITION**: No PNG/JPG/WebP/base64 raster placeholders.
+
+    **Schema protection**: Do not remove or replace \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`, etc.
+
     # FOOLPROOF COPY-PASTE TEMPLATES
     **Vector Transformation (FLAT LINE ONLY):**
     "correct_calculation": "旋轉變換為：\\n $$ \\\\begin{bmatrix} x' \\\\\\\\ y' \\\\end{bmatrix} = \\\\begin{bmatrix} \\\\cos\\\\theta & -\\\\sin\\\\theta \\\\\\\\ \\\\sin\\\\theta & \\\\cos\\\\theta \\\\end{bmatrix} \\\\begin{bmatrix} x \\\\\\\\ y \\\\end{bmatrix} $$"
@@ -52,6 +69,60 @@ export class GsatMathBStrategy implements GradingStrategy {
         "svgCode": "<svg viewBox='-100 -100 200 200' xmlns='http://www.w3.org/2000/svg'><ellipse cx='0' cy='0' rx='50' ry='25' fill='none' stroke='#3b82f6' stroke-width='2' /><g transform='rotate(45)'><ellipse cx='0' cy='0' rx='50' ry='25' fill='none' stroke='#f97316' stroke-width='2' stroke-dasharray='4, 4' /></g></svg>"
       }]
     }
+
+    # ════════════════════════════════════════════════════════════
+    # GEOMETRIC PRECISION PROTOCOL v4 — TOPOLOGY-ONLY EXTRACTION
+    # ABSOLUTE OVERRIDE: applies to ALL geometry figure questions
+    # ════════════════════════════════════════════════════════════
+
+    CRITICAL ARCHITECTURE CHANGE:
+    The rendering system has a mathematical solver for **regular** polygons.
+    You DO NOT provide pixel coordinates for those — they are computed automatically.
+    Your job is **TOPOLOGY EXTRACTION** only (what connects to what, shaded region boundaries).
+
+    ## FOR REGULAR POLYGONS (正多邊形題):
+    Add visualization_code.visualizations[] item: \`"type": "geometry_json"\`, \`"code"\` = JSON object or string with **TOPOLOGY ONLY** (no x,y):
+
+    {
+      "solver_mode": "regular_polygon",
+      "polygon_sides": <number>,
+      "canvas_width": 480,
+      "canvas_height": 480,
+      "diagonal_topology": "all" | "long_only" | "some" | "none",
+      "specific_diagonals": [["A","C"], ...] | null,
+      "shaded_region": {
+        "exists": true,
+        "fill_color": "#fef08a",
+        "boundary_lines": [["A","D"], ["B","F"], ["A","F"]],
+        "positional": null,
+        "vertex_sequence": null
+      },
+      "vertex_labels": ["A","B","C","D","E","F"],
+      "figure_in_coordinate_system": false,
+      "numeric_constraints": {
+        "shaded_to_total_ratio": 0.1667,
+        "shaded_to_total_tolerance": 0.05
+      }
+    }
+
+    ### ABSOLUTE RULES:
+    1. NEVER use "python_script" — FORBIDDEN. 3D rendering destroys accuracy.
+    2. For regular polygons: DO NOT provide x,y coordinates. Use solver_mode.
+    3. figure_in_coordinate_system: true ONLY if numbered X/Y axes are visible. Standalone shapes = false.
+    4. diagonal_topology: "all" | "long_only" | "some" (with specific_diagonals) | "none".
+    5. boundary_lines: vertex letter pairs that bound the shaded region; the solver computes exact intersections.
+    6. **PREFERRED when the problem text gives areas or fractions**: include \`numeric_constraints\` with \`shaded_to_total_ratio\` or \`shaded_area_math\` + \`figure_area_math\`. The solver matches area **before** \`boundary_lines\` (more reliable than guessing boundaries from the image).
+
+    ## FOR NON-REGULAR OR COMPLEX FIGURES:
+    Use full geometry_json with estimated coordinates (low_level, mid_level, high_level, ocr, vertices, edges, …). The client applies best-effort correction.
+
+    ## ZERO-CHANGE RULE:
+    For non-geometry questions (pure algebra, statistics, etc.),
+    keep existing visualization_code behavior completely unchanged.
+
+    # ════════════════════════════════════════════════════════════
+    # END GEOMETRIC PRECISION PROTOCOL v4
+    # ════════════════════════════════════════════════════════════
 
     # ALTERNATIVE SOLUTIONS
     If CORRECT: populate "alternative_solutions" with **AT LEAST SEVEN (7)** distinct alternative methods.
@@ -101,6 +172,7 @@ export class GsatMathBStrategy implements GradingStrategy {
               }
             ]
           }
+          // visualization_code 僅輔助圖示，不得刪減或取代上列評分欄位
         }
       ]
     }

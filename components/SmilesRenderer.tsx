@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-// WASM 路徑：使用完整 URL 確保 dev/build 皆可正確載入
+// RDKit minimal WASM（內建 Cairo 繪圖）：路徑須與 vite 的 viteStaticCopy 輸出一致（dist 根目錄的 RDKit_minimal.wasm）
 const getRDKitWasmPath = () => {
   if (typeof window !== 'undefined') {
     const base = import.meta.env.BASE_URL || './';
-    return new URL(base + 'RDKit_minimal.wasm', window.location.href).href;
+    return new URL('RDKit_minimal.wasm', new URL(base, window.location.href)).href;
   }
   const base = import.meta.env.BASE_URL || '/';
   return base.replace(/\/$/, '') + '/RDKit_minimal.wasm';
@@ -30,7 +30,13 @@ const getRDKit = async () => {
       // Handle both default export and module.exports
       const initRDKitModule = module.default || (module as any);
       return initRDKitModule({
-        locateFile: () => getRDKitWasmPath(),
+        // RDKit minimal 的 Cairo/SVG 在 wasm 內；.wasm 路徑須與 viteStaticCopy 複製到 dist 根目錄一致
+        locateFile: (file: string) => {
+          if (file.endsWith('.wasm')) return getRDKitWasmPath();
+          const base = import.meta.env.BASE_URL || './';
+          const origin = typeof window !== 'undefined' ? window.location.href : 'http://localhost/';
+          return new URL(file, new URL(base, origin)).href;
+        },
       }).then((instance: any) => {
         RDKitModule = instance;
         return instance;
@@ -172,7 +178,10 @@ export const SmilesRenderer: React.FC<SmilesRendererProps> = ({
   }
 
   return (
-    <div className={`flex justify-center items-center overflow-hidden bg-white dark:bg-zinc-900 rounded-xl p-4 shadow-sm border border-zinc-200 dark:border-zinc-800 relative ${className}`}>
+    <div
+      className={`flex justify-center items-center overflow-hidden bg-white dark:bg-zinc-900 rounded-xl p-4 shadow-sm border border-zinc-200 dark:border-zinc-800 relative ${className}`}
+      data-asea-will-read-frequently
+    >
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-zinc-900/80 z-10 rounded-xl">
           <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>

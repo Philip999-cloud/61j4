@@ -164,15 +164,38 @@ export const LatexRenderer = React.memo(({ content, className = '', isInline = f
           .katex-display {
             overflow-x: auto;
             overflow-y: hidden;
-            padding: 0.5rem 0;
+            padding: 0.75rem 0;
+            margin: 0.75rem 0;
+            max-width: 100%;
+            display: block;
+            text-align: center;
+          }
+          .latex-renderer-container .katex { font-size: 1.06em; }
+          @media (min-width: 640px) {
+            .latex-renderer-container .katex-display .katex { font-size: 1.12em; }
           }
         `}</style>
         <ReactMarkdown
           remarkPlugins={[remarkMath, remarkGfm]}
           // throwOnError: false is CRITICAL. It tells KaTeX to render the raw string in a <span class="katex-error"> instead of throwing a JS error that crashes React.
-          rehypePlugins={[[rehypeKatex, { strict: false, trust: true, throwOnError: false }]]}
+          rehypePlugins={[
+            [
+              rehypeKatex,
+              {
+                strict: false,
+                trust: true,
+                throwOnError: false,
+                /* displayMode 由 remark-math 的 math-display / math-inline 節點決定；$$ 為區塊 display */
+              },
+            ],
+          ]}
           components={{
-            p: ({ node, ...props }) => <p className={`${isInline ? 'inline' : 'mb-4'} leading-relaxed last:mb-0 break-words`} {...props} />,
+            p: ({ node, ...props }) => (
+              <p
+                className={`${isInline ? 'inline' : 'mb-8 leading-loose'} last:mb-0 break-words`}
+                {...props}
+              />
+            ),
             ul: ({ node, ...props }) => <ul className="list-disc pl-6 mb-4 space-y-1" {...props} />,
             ol: ({ node, ...props }) => <ol className="list-decimal pl-6 mb-4 space-y-1" {...props} />,
             li: ({ node, ...props }) => <li className="leading-relaxed" {...props} />,
@@ -184,15 +207,22 @@ export const LatexRenderer = React.memo(({ content, className = '', isInline = f
               </div>
             ),
             table: ({ node, ...props }) => (
-              <div className="overflow-x-auto my-4 w-full">
-                <table className="w-full text-center table-fixed border-collapse border border-slate-700 bg-slate-800" {...props} />
+              <div className="overflow-x-auto my-4 w-full rounded-lg border border-[var(--border-color)]">
+                <table
+                  className="w-full text-center border-collapse text-sm bg-[var(--bg-card)] text-[var(--text-primary)]"
+                  {...props}
+                />
               </div>
             ),
-            thead: ({ node, ...props }) => <thead {...props} />,
+            thead: ({ node, ...props }) => <thead className="bg-[var(--bg-main)]" {...props} />,
             tbody: ({ node, ...props }) => <tbody {...props} />,
-            tr: ({ node, ...props }) => <tr {...props} />,
-            th: ({ node, ...props }) => <th className="w-1/4 border border-slate-600 p-2 text-indigo-300 font-bold" {...props} />,
-            td: ({ node, ...props }) => <td className="w-1/4 border border-slate-600 p-2 text-slate-300" {...props} />,
+            tr: ({ node, ...props }) => <tr className="border-b border-[var(--border-color)]" {...props} />,
+            th: ({ node, ...props }) => (
+              <th className="border border-[var(--border-color)] p-2 font-bold text-[var(--text-primary)]" {...props} />
+            ),
+            td: ({ node, ...props }) => (
+              <td className="border border-[var(--border-color)] p-2 text-[var(--text-primary)]" {...props} />
+            ),
             code: ({ node, className, children, ...props }: any) => {
               const isBlock = /language-(\w+)/.test(className || '') || String(children).includes('\n');
               

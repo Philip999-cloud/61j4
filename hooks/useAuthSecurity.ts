@@ -8,7 +8,8 @@ export const useAuthSecurity = () => {
     if (!storedDeviceId) {
       localStorage.setItem('deviceId', currentDeviceId);
     } else if (storedDeviceId !== currentDeviceId) {
-      console.log('Security Alert: New device detected.');
+      // 視窗尺寸或 UA 變更即會觸發，屬預期情況；避免用 console.warn 誤導為安全事件
+      console.debug('[useAuthSecurity] device fingerprint changed');
       // In a real app, trigger an email alert here
     }
   }, []);

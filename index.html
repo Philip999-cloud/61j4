@@ -5,6 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>ASEA - Multi-Model Consensus Grading</title>
+    <!-- 須在 raphael/jsxgraph 等 script 之前：否則其建立的 canvas 不會帶上 willReadFrequently -->
+    <script>
+      (function () {
+        try {
+          var orig = HTMLCanvasElement.prototype.getContext;
+          HTMLCanvasElement.prototype.getContext = function (id, opts) {
+            if (id === '2d') {
+              opts = Object.assign({ willReadFrequently: true }, opts || {});
+            }
+            return orig.call(this, id, opts);
+          };
+        } catch (e) {}
+        try {
+          if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype.getContext) {
+            var o2 = OffscreenCanvas.prototype.getContext;
+            OffscreenCanvas.prototype.getContext = function (id, opts) {
+              if (id === '2d') {
+                opts = Object.assign({ willReadFrequently: true }, opts || {});
+              }
+              return o2.call(this, id, opts);
+            };
+          }
+        } catch (e2) {}
+      })();
+    </script>
     <script>
       window.global = window;
       window.require = function(mod) {
@@ -15,7 +40,10 @@
       (function() {
         const originalWarn = console.warn;
         console.warn = function(...args) {
-          if (args.length > 0 && typeof args[0] === 'string' && args[0].includes('quirks mode')) return;
+          if (args.length > 0 && typeof args[0] === 'string') {
+            if (args[0].includes('quirks mode')) return;
+            if (args[0].includes('Multiple readback') && args[0].includes('getImageData')) return;
+          }
           originalWarn.apply(console, args);
         };
       })();
