@@ -1,5 +1,6 @@
 
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { jsonrepair } from "jsonrepair";
 import { 
   LinguisticAudit, 
   SubjectExpertAnalysis, 
@@ -45,51 +46,6 @@ const COMPOUNDS_SCHEMA_SUBJECTS = ['化學', 'Chemistry', '自然', '物理', 'P
 
 /** Pro 逾時或忙碌時改走較快模型（勿與下方 Pro 模型字串相同，否則 fallback 無效） */
 const GEMINI_FLASH_FALLBACK_MODEL = 'gemini-3-flash-preview';
-
-/** 可於 .env 設 VITE_GEMINI_PRO_MODEL 覆寫（例如連線至 3.1 預覽端點頻繁被重置時改試其他可用模型） */
-const GEMINI_PRO_MODEL =
-  (import.meta.env.VITE_GEMINI_PRO_MODEL as string | undefined)?.trim() || 'gemini-3.1-pro-preview';
-
-function createGeminiAi(apiKey: string): GoogleGenAI {
-  return new GoogleGenAI({
-    apiKey: String(apiKey).trim(),
-    httpOptions: {
-      timeout: 300_000,
-      retryOptions: { attempts: 5 },
-    },
-  });
-}
-
-/** 彙整 SDK／fetch 丟出的巢狀錯誤字串，供暫態判斷與 log（避免 status／message 皆為空時顯示 undefined） */
-function flattenGeminiErrorText(err: unknown): string {
-  const parts: string[] = [];
-  const visit = (x: unknown, depth: number) => {
-    if (depth > 8 || x == null) return;
-    if (typeof x === 'string') {
-      parts.push(x);
-      return;
-    }
-    if (typeof x === 'number' || typeof x === 'boolean') {
-      parts.push(String(x));
-      return;
-    }
-    if (x instanceof Error) {
-      if (x.name) parts.push(x.name);
-      if (x.message) parts.push(x.message);
-      visit((x as Error & { cause?: unknown }).cause, depth + 1);
-      return;
-    }
-    if (typeof x === 'object') {
-      const o = x as Record<string, unknown>;
-      if (typeof o.message === 'string') parts.push(o.message);
-      if (typeof o.status === 'number') parts.push(String(o.status));
-      if (o.error) visit(o.error, depth + 1);
-      if (o.cause) visit(o.cause, depth + 1);
-    }
-  };
-  visit(err, 0);
-  return parts.filter(Boolean).join(' | ');
-}
 
 /**
  * 判斷是否為化學科目
@@ -173,7 +129,7 @@ type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
 }
 
 // Enhanced Retry Logic with Exponential Backoff
-async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 4, baseDelay = 2000) {
+async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 3, baseDelay = 2000) {
   let lastError;
   for (let i = 0; i < retries; i++) {
     try {
@@ -183,11 +139,7 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
       lastError = e;
 
       const status = e.status || e.code || e.error?.code || e.response?.status;
-      const flat = flattenGeminiErrorText(e);
-      const message = (
-        flat ||
-        (e.message || e.error?.message || JSON.stringify(e) || '') as string
-      ).toString();
+      const message = (e.message || e.error?.message || JSON.stringify(e) || '').toString();
 
       // 0. API 密鑰或模型錯誤：立即拋出，讓外層得知具體原因
       const errMsgLower = message.toLowerCase();
@@ -216,42 +168,30 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
          throw new Error("請求內容無效 (Invalid Argument)。可能是圖片檔案過大、格式不支援或內容為空。");
       }
 
-      // 2. Identify Transient/Server Errors（含瀏覽器 net::ERR_CONNECTION_CLOSED / Failed to fetch 等無 HTTP status 之情況）
-      const isTransient =
-        status === 503 ||
-        status === 500 ||
-        status === 429 ||
+      // 2. Identify Transient/Server Errors
+      const isTransient = 
+        status === 503 || 
+        status === 500 || 
+        status === 429 || 
         errMsgLower.includes('failed to fetch') ||
-        errMsgLower.includes('fetch failed') ||
-        errMsgLower.includes('err_connection') ||
-        errMsgLower.includes('connection closed') ||
-        errMsgLower.includes('connection reset') ||
-        errMsgLower.includes('econnreset') ||
-        errMsgLower.includes('networkerror') ||
-        errMsgLower.includes('network error') ||
-        errMsgLower.includes('load failed') ||
-        errMsgLower.includes('econnrefused') ||
-        (e?.name === 'TypeError' && errMsgLower.includes('fetch')) ||
         (message && (
-          message.includes('overloaded') ||
-          message.includes('503') ||
-          message.includes('high demand') ||
-          message.includes('capacity') ||
-          message.includes('UNAVAILABLE') ||
-          message.includes('timeout') ||
-          message.includes('internal error')
+            message.includes('overloaded') || 
+            message.includes('503') || 
+            message.includes('high demand') || 
+            message.includes('capacity') ||
+            message.includes('UNAVAILABLE') ||
+            message.includes('timeout') ||
+            message.includes('internal error') ||
+            message.includes('fetch failed')
         ));
-
+      
       // 3. Exponential Backoff（暫態錯誤不重複 console.error，避免批改流程洗版）
       if (isTransient && i < retries - 1) {
-        const retryLabel = status != null ? String(status) : message ? message.slice(0, 120) : 'network';
         if (import.meta.env.DEV) {
-          console.debug(`[Gemini API] transient (attempt ${i + 1}/${retries}):`, retryLabel);
+          console.debug(`[Gemini API] transient (attempt ${i + 1}/${retries}):`, status ?? message);
         }
         const delay = baseDelay * Math.pow(2, i) + (Math.random() * 500); // Add jitter
-        console.warn(
-          `Gemini API Transient Error (${retryLabel}). Retrying in ${Math.round(delay)}ms... (Attempt ${i + 1}/${retries})`
-        );
+        console.warn(`Gemini API Transient Error (${status}). Retrying in ${Math.round(delay)}ms... (Attempt ${i+1}/${retries})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -264,34 +204,23 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
   console.warn("Gemini API Failed after retries:", lastError);
   let finalMsg = lastError?.message || lastError?.error?.message || "AI 服務暫時無法使用，請稍後再試 (Service Unavailable)。";
   
-  // 針對 ERR_INTERNET_DISCONNECTED、ERR_CONNECTION_CLOSED 等（Failed to fetch）提供友善的繁體中文提示
-  const finalLower = finalMsg.toLowerCase();
-  if (
-    finalLower.includes('failed to fetch') ||
-    finalLower.includes('connection closed') ||
-    finalLower.includes('err_connection') ||
-    finalLower.includes('networkerror') ||
-    finalLower.includes('load failed')
-  ) {
-    finalMsg =
-      '網路連線中斷、不穩定，或與 AI 伺服器之連線被重置（例如防火牆／代理）。請檢查網路、VPN／代理設定，或稍後再試；若僅特定模型失敗，可在 .env 設定 VITE_GEMINI_PRO_MODEL 改試其他模型。';
+  // 針對 ERR_INTERNET_DISCONNECTED (Failed to fetch) 提供友善的繁體中文提示
+  if (finalMsg.toLowerCase().includes('failed to fetch')) {
+    finalMsg = "網路連線中斷或不穩定，無法連線至 AI 伺服器。請檢查您的 Wi-Fi 或行動網路狀態後再試一次。";
   }
   
   throw new Error(finalMsg);
 }
 
 /**
- * 根據 prompt 長度動態計算 Pro 模型的等待上限。
- * - 短 prompt（< 2000 字）：20 秒，適合單題簡單計算
- * - 中等 prompt（2000–4000 字）：35 秒，適合一般化學/物理多步驟
- * - 長 prompt（> 4000 字）：50 秒，適合複雜多子題或含圖題
+ * 根據 prompt 長度動態計算 Pro 模型的等待上限（主席綜評／詳解會再與下限取 max）。
+ * 化學長 JSON schema、多圖多模態易觸及先前 150s 上限而誤降級 Flash，故拉長分段等待。
  */
 function getProTimeoutMs(prompt: string): number {
   const len = typeof prompt === 'string' ? prompt.length : JSON.stringify(prompt).length;
-  // 針對 Pro 複雜圖表與長文本，放寬超時上限至 1.5 ~ 2.5 分鐘
-  if (len > 4000) return 150000; // 150 秒
-  if (len > 2000) return 120000; // 120 秒
-  return 90000; // 90 秒
+  if (len > 4000) return 240000; // 240 秒
+  if (len > 2000) return 180000; // 180 秒
+  return 120000; // 120 秒
 }
 
 /**
@@ -346,14 +275,71 @@ function safeJsonParse(text: string | null | undefined): any {
           .replace(/(?<!\\)\\(?!["\\/bfnrtu])/g, "\\\\");
         return JSON.parse(processing);
       } catch (e3) {
-        console.error("JSON Parse 最終失敗", e3);
-        return null;
+        try {
+          const repaired = jsonrepair(cleaned);
+          return JSON.parse(repaired);
+        } catch (e4) {
+          try {
+            const repaired2 = jsonrepair(
+              cleaned.replace(/\n/g, " ").replace(/\r/g, "").replace(/(?<!\\)\\(?!["\\/bfnrtu])/g, "\\\\")
+            );
+            return JSON.parse(repaired2);
+          } catch (e5) {
+            console.error("JSON Parse 最終失敗", e5);
+            return null;
+          }
+        }
       }
     }
   }
 }
 
 const STEM_KEYWORDS = ['數學', '物理', '化學', '生物', '自然', 'Math', 'Physics', 'Chemistry', 'Biology', 'Science', '數甲', '數A', '數B'];
+
+/** 標準批改流程中，學生手寫作答應使用 STEM／LaTeX 轉錄提示詞的科目（排除純語文作文） */
+const STEM_STUDENT_TRANSCRIPTION_SUBJECT_IDS = new Set([
+  'gsat-math-a',
+  'gsat-math-b',
+  'gsat-science',
+  'ast-math-a',
+  'ast-physics',
+  'ast-chemistry',
+  'ast-biology',
+]);
+
+export function subjectUsesStemStudentTranscription(subject: Pick<Subject, 'id' | 'name'> | null | undefined): boolean {
+  if (!subject?.id) return false;
+  return STEM_STUDENT_TRANSCRIPTION_SUBJECT_IDS.has(subject.id);
+}
+
+function isChemistrySubjectForTranscription(subject: Pick<Subject, 'id' | 'name'> | null | undefined): boolean {
+  if (!subject) return false;
+  if (subject.id === 'ast-chemistry') return true;
+  const n = (subject.name || '').toLowerCase();
+  return subject.name.includes('化學') || n.includes('chemistry');
+}
+
+const STEM_STUDENT_ANSWER_OCR_PROMPT = `
+Role: Professional OCR Specialist for handwritten STEM exam answers (Traditional Chinese context).
+Task: Transcribe the student's handwritten answer image into text that will be rendered with KaTeX on the web.
+
+**CRITICAL — Math and science notation (must follow):**
+1. **LaTeX delimiters**: Wrap every equation, formula, chemical expression, and standalone numeric relation in LaTeX.
+   - Short expressions inline: single dollar signs, no spaces inside (e.g. $H_2SO_4$, $10^{-3}$, $K_{sp}$).
+   - Multi-line structures (ICE tables, aligned steps, matrices): use block math with $$ on their own lines before and after the environment.
+2. **No Markdown tables**: Do NOT use pipe tables (| ... |) or ASCII-only column alignment for stoichiometry / ICE. For initial–change–equilibrium or mole tables you MUST use a LaTeX block:
+   $$\\begin{array}{...} ... \\end{array}$$
+   with \\\\ between rows and & between columns; column specifiers must match the number of columns.
+3. **Chemistry (when formulas appear)**: Prefer mhchem inside math: $\\ce{...}$ for species and reactions (e.g. $\\ce{BaSO4}$, $\\ce{SO4^2-}$, $\\ce{Ba^{2+}}$). Subscripts/superscripts for ions and scientific notation must live inside math mode.
+4. **Arrows and symbols**: Use LaTeX where appropriate (e.g. $\\rightarrow$, $\\rightleftharpoons$, $\\Rightarrow$, $\\therefore$) instead of relying on raw Unicode layout for mixed math.
+5. **Prose in Chinese**: Explanatory sentences may remain in 繁體中文 outside math; embed formulas in $...$ or $$...$$ as above.
+6. **Faithfulness**: Transcribe the student's final intended work; omit crossed-out or clearly deleted lines. Preserve meaningful line breaks between derivation steps.
+7. **Output**: Return ONLY the transcribed string. No preamble or commentary.
+`.trim();
+
+const STEM_STUDENT_ANSWER_CHEMISTRY_ADDENDUM = `
+**Chemistry-specific:** For equilibrium / solubility / titration calculations, stoichiometry rows MUST appear inside a single $$\\begin{array}...\\end{array}$$ block when the student drew a table or aligned numbers — never as loose spaced numbers only.
+`.trim();
 
 /** 與 transcribeHandwrittenImages 內 data URL 解析邏輯一致（供 Phase 3 多模態附圖） */
 function dataUrlToInlinePart(dataUrl: string): { inlineData: { mimeType: string; data: string } } {
@@ -398,7 +384,7 @@ export async function transcribeHandwrittenImages(
     // #endregion
     return "";
   }
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   // #region agent log
   const first = images[0] ? String(images[0]) : '';
   fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1-H3',location:'geminiService.ts:transcribeHandwrittenImages:entry',message:'transcribe start',data:{mode,subjectId:subject?.id??null,imageCount:images.length,firstUrlPrefix:first.slice(0,48),looksLikeDataUrl:first.startsWith('data:')},timestamp:Date.now()})}).catch(()=>{});
@@ -435,7 +421,7 @@ export async function transcribeHandwrittenImages(
     parts.push({ text: prompt });
     try {
       const result = await generateContentWithRetry(ai, {
-        model: GEMINI_PRO_MODEL, // Use highest vision model for visual tasks
+        model: 'gemini-3.1-pro-preview', // Use highest vision model for visual tasks
         contents: { parts }
       }, 3, 2000);
       const t = result.text || "";
@@ -489,11 +475,15 @@ export async function transcribeHandwrittenImages(
       5. **Language**: Primarily Traditional Chinese (繁體中文).
       ${mathFigureAddendum}
     `;
+  } else if (mode === 'answer' && subjectUsesStemStudentTranscription(subject)) {
+    prompt =
+      STEM_STUDENT_ANSWER_OCR_PROMPT +
+      (isChemistrySubjectForTranscription(subject) ? `\n\n${STEM_STUDENT_ANSWER_CHEMISTRY_ADDENDUM}` : '');
   } else {
-    // 學生手寫作答：維持先前版本（統一手寫辨識提示），避免強制 LaTeX／array 導致版面混亂；Phase 3 仍可依圖與文字綜合批改。
+    // Optimized for Chinese / English composition handwriting (non-STEM standard subjects)
     prompt = `
       Role: Expert Traditional Chinese Handwriting Recognizer (繁體中文手寫辨識專家).
-      Task: Transcribe the student's handwritten answer image into pure text.
+      Task: Transcribe the student's handwritten essay image into pure text.
       
       **CRITICAL OPTIMIZATION RULES:**
       1. **Context-Aware Correction**: If a character is scribbled, cursive, or ambiguous, use the sentence context to identify the correct Traditional Chinese character.
@@ -508,7 +498,7 @@ export async function transcribeHandwrittenImages(
 
   try {
     const result = await generateContentWithRetry(ai, {
-      model: GEMINI_PRO_MODEL,
+      model: 'gemini-3.1-pro-preview',
       contents: { parts }
     }, 3, 2000);
     const t = result.text || "";
@@ -517,12 +507,12 @@ export async function transcribeHandwrittenImages(
     // #endregion
     return t;
   } catch (e) {
-    console.warn(`OCR (${GEMINI_PRO_MODEL}) failed, retrying...`, e);
+    console.warn('OCR (gemini-3.1-pro-preview) failed, retrying...', e);
     // #region agent log
     fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H4',location:'geminiService.ts:transcribeHandwrittenImages:ocrRetry',message:'ocr first attempt failed',data:{mode,err:String((e as Error)?.message||e)},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
     const result = await generateContentWithRetry(ai, {
-      model: GEMINI_PRO_MODEL,
+      model: 'gemini-3.1-pro-preview',
       contents: { parts }
     }, 2, 2000);
     const t2 = result.text || "";
@@ -530,6 +520,42 @@ export async function transcribeHandwrittenImages(
     fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:ocrRetryOk',message:'ocr after retry',data:{mode,outLen:t2.length,outPreview:t2.slice(0,320)},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
     return t2;
+  }
+}
+
+export async function classifyScienceSubject(qText: string, rText: string): Promise<string> {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const prompt = `
+    Role: 高中自然科教師。
+    Task: 請分析以下學測題目的內容，判斷它屬於哪一個子學科。
+    選項：【物理】、【化學】、【生物】、【地球科學】、【綜合自然】。
+    
+    題目內容：${qText}
+    參考解答：${rText}
+    
+    請「只」輸出上述五個選項中的其中一個詞彙，不要有任何其他標點符號或解釋。
+  `;
+
+  try {
+    const result = await generateContentWithRetry(
+      ai,
+      {
+        model: GEMINI_FLASH_FALLBACK_MODEL,
+        contents: prompt,
+        config: { temperature: 0.1 },
+      },
+      2,
+      1000
+    );
+
+    const text = (result.text || '').trim();
+    if (['物理', '化學', '生物', '地球科學'].includes(text)) {
+      return text;
+    }
+    return '自然';
+  } catch (e) {
+    console.warn('分類自然科失敗，降級為綜合自然', e);
+    return '自然';
   }
 }
 
@@ -544,11 +570,11 @@ export async function transcribeChineseGroup(q: string[], r: string[], s: string
 
 // We use JSON Schema enforcement here for robust parsing
 export async function runLinguisticAudit(content: string, subjectName: string, instructions: string): Promise<LinguisticAudit> {
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `Role: Linguistic Auditor (Phase 1). Subject: ${subjectName}. Instructions: ${instructions}. Analyze structural integrity. Content: ${content}`;
   
   const result = await generateContentWithRetry(ai, {
-    model: GEMINI_PRO_MODEL,
+    model: 'gemini-3.1-pro-preview',
     contents: prompt,
     config: { 
         responseMimeType: "application/json",
@@ -567,11 +593,11 @@ export async function runLinguisticAudit(content: string, subjectName: string, i
 }
 
 export async function runSubjectExpertAnalysis(content: string, subjectName: string, instructions: string): Promise<SubjectExpertAnalysis> {
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `Role: Subject Matter Expert (Phase 2). Subject: ${subjectName}. Instructions: ${instructions}. Analyze depth and reasoning. Content: ${content}`;
   
   const result = await generateContentWithRetry(ai, {
-    model: GEMINI_PRO_MODEL,
+    model: 'gemini-3.1-pro-preview',
     contents: prompt,
     config: { 
         responseMimeType: "application/json",
@@ -597,7 +623,7 @@ export async function runModeratorSynthesis(
   subjectId?: string,
   visionImages?: ModeratorVisionImages
 ): Promise<ModeratorSynthesis> {
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const strategy = StrategyFactory.getStrategy(subjectName);
   
   let prompt: string;
@@ -662,6 +688,8 @@ export async function runModeratorSynthesis(
     responseMimeType: "application/json" as const,
     systemInstruction: buildSystemInstruction(systemInstruction, subjectName),
     temperature: 0.2,
+    /** 化學／物理 compounds + stem_sub_results 體積大，預設輸出過短會截斷 JSON → Unterminated string */
+    maxOutputTokens: 16384,
     ...(COMPOUNDS_SCHEMA_SUBJECTS.some(k => subjectName.includes(k)) && {
       responseSchema: {
         type: Type.OBJECT,
@@ -813,14 +841,15 @@ export async function runModeratorSynthesis(
 
   let result;
   try {
-    // Primary: Pro；允許數次重試以消化 429/503，再交由 withTimeout 處理長時間推理
+    // 與 generateReferenceSolution 一致：主席綜評至少給 Pro 3 分鐘，避免長題誤觸逾時後降級 Flash
+    const proWaitMs = Math.max(getProTimeoutMs(promptForTimeout), 180_000);
     result = await withTimeout(
       generateContentWithRetry(ai, {
-        model: GEMINI_PRO_MODEL,
+        model: 'gemini-3.1-pro-preview',
         contents,
         config: baseConfig,
       }, 3, 2000),
-      getProTimeoutMs(promptForTimeout)
+      proWaitMs
     );
   } catch (e) {
     const fallbackReason = e instanceof Error ? e.message : String(e);
@@ -878,7 +907,7 @@ export async function generateReferenceSolution(
   subjectId?: string,
   visionImages?: ModeratorVisionImages
 ): Promise<ModeratorSynthesis> {
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const isComposition = ['國文', 'Chinese', '英文', 'English', '作文'].some(k => subjectName.includes(k));
 
@@ -898,7 +927,15 @@ export async function generateReferenceSolution(
     1. Analyze the Question's core requirements.
     ${isComposition 
       ? '2. Provide a high-quality model essay that reflects "CEEC A+ Standards".'
-      : '2. **STEP-BY-STEP DERIVATION (One Problem, Multiple Solutions)**:\n       - Provide **Method 1** (Standard Approach) with detailed steps.\n       - If applicable, provide **Method 2** (Alternative/Faster Approach).\n       - Explain "How to approach this problem" for students.'
+      : `2. **ULTRA-DETAILED STEP-BY-STEP DERIVATION (絕對禁止跳步驟)**:
+         You MUST act as a patient tutor. Break down the math/science problem into MICRO-STEPS.
+         Follow this exact structure for Method 1:
+         - 【已知條件】(Given): List all variables and numbers explicitly.
+         - 【核心公式】(Formula): State the theorem or formula used before plugging in numbers.
+         - 【代入數據】(Substitution): Show the exact equation with numbers plugged in.
+         - 【逐步推導】(Micro-Algebra): Show EVERY single algebraic manipulation. DO NOT combine steps. (e.g., if moving a variable, show the intermediate state).
+         - 【最終答案】(Final Answer): State the final result with correct units.
+         - If applicable, provide **Method 2** (Alternative/Faster Approach) with the same rigor.`
     }
     
     # VISUALIZATION ENGINE (JSON OBJECT):
@@ -934,7 +971,7 @@ export async function generateReferenceSolution(
           "sub_id": "Q1",
           "max_points": 10,
           "feedback": "Analysis",
-          "correct_calculation": "${isComposition ? 'Model Essay Content' : 'Full step-by-step derivation with $$...$$ math blocks.'}",
+          "correct_calculation": "${isComposition ? 'Model Essay Content' : 'Full step-by-step derivation with $$...$$ math blocks. MUST include 【已知條件】, 【核心公式】, 【代入數據】, 【逐步推導】, 【最終答案】.'}",
           "visualization_code": ${isComposition ? 'null' : '{ "explanation": "...", "visualizations": [{ "type": "plotly_chart", "data": [], "layout": {} }] }'},
           "setup": 0, "process": 0, "result": 0, "logic": 0
         }
@@ -991,12 +1028,13 @@ export async function generateReferenceSolution(
       const proWaitMs = Math.max(getProTimeoutMs(refPromptForTimeout), 180_000);
       const result = await withTimeout(
         generateContentWithRetry(ai, {
-          model: GEMINI_PRO_MODEL,
+          model: 'gemini-3.1-pro-preview',
           contents: refContents,
           config: { 
             responseMimeType: "application/json",
             systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
-            temperature: 0.2
+            temperature: 0.2,
+            maxOutputTokens: 16384,
           }
         }, 1, 1000),
         proWaitMs
@@ -1012,7 +1050,8 @@ export async function generateReferenceSolution(
         config: { 
           responseMimeType: "application/json",
           systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
-          temperature: 0.2
+          temperature: 0.2,
+          maxOutputTokens: 16384,
         }
       }, 4, 2000);
       return safeJsonParse(result.text) || {};
@@ -1023,7 +1062,7 @@ export async function analyzeChineseSection(
   subQuestions: ChineseTaskContent[],
   instructions?: string
 ): Promise<SectionResult> {
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const sectionResults: any[] = [];
   let totalSectionScore = 0;
 
@@ -1119,7 +1158,7 @@ export async function analyzeChineseSection(
             // prompt 已在此迴圈內組好（含 q.question, q.student, instructions 等），傳入 getProTimeoutMs 計算正確
             res = await withTimeout(
                 generateContentWithRetry(ai, {
-                    model: GEMINI_PRO_MODEL,
+                    model: 'gemini-3.1-pro-preview',
                     contents: prompt,
                     config: { responseMimeType: "application/json" }
                 }, 1, 1000),
@@ -1207,7 +1246,7 @@ export async function sendChatToGemini(messages: ChatTurn[]): Promise<string> {
   if (!messages || messages.length === 0) {
     throw new Error('訊息列表不得為空。');
   }
-  const ai = createGeminiAi(apiKey);
+  const ai = new GoogleGenAI({ apiKey: String(apiKey).trim() });
 
   const contents = messages.map((m) => ({
     role: m.role === 'user' ? 'user' : 'model',
@@ -1217,7 +1256,7 @@ export async function sendChatToGemini(messages: ChatTurn[]): Promise<string> {
   const result = await generateContentWithRetry(
     ai,
     {
-      model: GEMINI_PRO_MODEL,
+      model: 'gemini-3.1-pro-preview',
       contents,
       config: {
         systemInstruction: SUPPORT_SYSTEM_INSTRUCTION,
@@ -1315,7 +1354,7 @@ export async function fetchGeneratedImage(prompt: string): Promise<string> {
 }
 
 export async function getChineseOverallRemarks(sections: SectionResult[]): Promise<string> {
-  const ai = createGeminiAi(String(process.env.API_KEY ?? ''));
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const content = JSON.stringify(sections.map(s => ({ 
     title: s.section_title, 
     score: s.total_section_score, 
@@ -1323,7 +1362,7 @@ export async function getChineseOverallRemarks(sections: SectionResult[]): Promi
   })));
   
   const result = await generateContentWithRetry(ai, {
-    model: GEMINI_PRO_MODEL,
+    model: 'gemini-3.1-pro-preview',
     contents: `你是閱卷主席。根據以下國寫各題評分結果，撰寫一段精簡的總體評語(100字內，繁體中文)。輸入資料: ${content}`,
   }, 3, 2000);
   return result.text || "無法產生總評";

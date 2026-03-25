@@ -98,17 +98,54 @@ const PHYSICS_SVG_SANITIZE: DOMPurify.Config = {
   ],
 };
 
-/** 從 AI 回傳字串中取出第一個完整 `<svg>...</svg>`，略過 Markdown 围栏與雜訊 */
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+
+/** 從 AI 回傳字串中取出第一個完整 `<svg>...</svg>`，略過 Markdown 围栏與雜訊（根標籤大小寫不拘） */
 export function extractFirstSvgFragment(raw: string): string {
   if (typeof raw !== 'string') return '';
-  const m = raw.match(/<svg[\s\S]*?<\/svg>/i);
+  const m = raw.match(/<svg\b[\s\S]*?<\/svg>/i);
   return (m ? m[0] : raw).trim();
+}
+
+/**
+ * 若根 `<svg>` 開頭標籤缺少預設命名空間，則插入 `xmlns`，利於 `image/svg+xml` 解析與 namespaceURI 檢查。
+ */
+export function ensureSvgRootXmlns(svg: string): string {
+  const t = svg.trim();
+  const m = t.match(/^<svg\b[^>]*>/is);
+  if (!m) return svg;
+  const openTag = m[0];
+  if (/\sxmlns\s*=\s*["']http:\/\/www\.w3\.org\/2000\/svg["']/i.test(openTag)) {
+    return t;
+  }
+  const injected = openTag.replace(/^<svg\b/i, `<svg xmlns="${SVG_NAMESPACE}"`);
+  return t.slice(0, m.index!) + injected + t.slice(m.index! + openTag.length);
+}
+
+/** 與 SmartSvg / AseaRenderBlock 共用：已消毒的 SVG 字串是否可被 DOMParser 當作 SVG XML 解析 */
+export function isParsableAiSvgMarkup(markup: string): boolean {
+  const t = markup?.trim();
+  if (!t || !/<svg\b/i.test(t)) return false;
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return true;
+  try {
+    const doc = new DOMParser().parseFromString(t, 'image/svg+xml');
+    if (doc.querySelector('parsererror')) return false;
+    const root = doc.documentElement;
+    return (
+      root != null &&
+      root.namespaceURI === SVG_NAMESPACE &&
+      root.localName.toLowerCase() === 'svg'
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** 供 VisualizationRenderer / SmartSvg 等先洗 XSS，再交 PhysicsRenderer（可重複呼叫，結果仍安全） */
 export function sanitizeAiSvgCode(raw: string): string {
   const extracted = extractFirstSvgFragment(raw);
-  return DOMPurify.sanitize(extracted, PHYSICS_SVG_SANITIZE);
+  const withNs = ensureSvgRootXmlns(extracted);
+  return DOMPurify.sanitize(withNs, PHYSICS_SVG_SANITIZE);
 }
 
 const cleanLatexForSvg = (text: string) => {

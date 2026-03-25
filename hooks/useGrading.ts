@@ -8,10 +8,12 @@ import {
   ChineseTaskContent, 
   SectionResult,
   ActivityType,
-  QuestionSet
+  QuestionSet,
+  ModeratorSynthesis,
 } from '../types';
 import {
   transcribeHandwrittenImages,
+  classifyScienceSubject,
   generateReferenceSolution,
   runLinguisticAudit,
   runSubjectExpertAnalysis,
@@ -33,6 +35,19 @@ function isAbortError(e: unknown): boolean {
     (e instanceof DOMException && e.name === 'AbortError')
   );
 }
+
+function isReferenceSolutionContentful(solution: ModeratorSynthesis | Record<string, unknown>): boolean {
+  const remarks =
+    typeof (solution as ModeratorSynthesis).remarks_zh === 'string'
+      ? (solution as ModeratorSynthesis).remarks_zh.trim()
+      : '';
+  const stems = (solution as ModeratorSynthesis).stem_sub_results;
+  if (remarks.length > 0) return true;
+  if (Array.isArray(stems) && stems.length > 0) return true;
+  return false;
+}
+
+export type StandardGradingContext = { hadStudentImages: boolean };
 
 export const useGrading = () => {
   const gradingAbortRef = useRef<AbortController | null>(null);
@@ -118,7 +133,8 @@ export const useGrading = () => {
     gradingModel: GradingModel,
     logActivity: (entry: any) => void,
     onComplete: () => void,
-    visionImages?: ModeratorVisionImages
+    visionImages?: ModeratorVisionImages,
+    gradingContext?: StandardGradingContext
   ) => {
     if (!selectedSubject) return;
     if (!user) { setShowAuth(true); return; }
@@ -128,7 +144,6 @@ export const useGrading = () => {
     const finalInstructions = customInstructions + getPersonaInstructions(gradingModel);
 
     setIsGrading(true);
-    setGradingStatus(hasStudentInput ? '進行深度評核中...' : '未偵測到學生作答，正在生成標準詳解...');
     setP1(PhaseStatus.COMPLETED);
     setP2(PhaseStatus.LOADING);
     setP3(PhaseStatus.IDLE);
@@ -137,8 +152,27 @@ export const useGrading = () => {
     const gradingController = new AbortController();
     gradingAbortRef.current = gradingController;
     const { signal } = gradingController;
+
+    let dynamicSubjectName = selectedSubject.name;
     
     try {
+      if (!hasStudentInput && gradingContext?.hadStudentImages) {
+        setP1(PhaseStatus.IDLE);
+        setP2(PhaseStatus.IDLE);
+        setP3(PhaseStatus.ERROR);
+        setGradingStatus(
+          '已上傳學生作答圖片但辨識為空白，無法進行針對作答的批改；請在預覽中手動補上「學生作答」文字、或改用「文字輸入」後再試。'
+        );
+        return;
+      }
+
+      if (selectedSubject.id === 'gsat-science') {
+        setGradingStatus('正在分析題目所屬學科 (物理/化學/生物/地科)...');
+        const classified = await classifyScienceSubject(qText, rText);
+        dynamicSubjectName = `自然科 (${classified})`;
+      }
+      setGradingStatus(hasStudentInput ? '進行深度評核中...' : '未偵測到學生作答，正在生成標準詳解...');
+
       const combinedContent = `題目：${qText}\n詳解：${rText}\n學生：${sText}`;
       const rawStudentText = sText || combinedContent;
       // #region agent log
@@ -153,11 +187,16 @@ export const useGrading = () => {
         try {
           const solution = await generateReferenceSolution(
             combinedContent,
-            selectedSubject.name,
+            dynamicSubjectName,
             finalInstructions,
             selectedSubject.id,
             visionImages
           );
+          if (!isReferenceSolutionContentful(solution)) {
+            setP3(PhaseStatus.ERROR);
+            setGradingStatus('標準詳解回傳內容為空或無法解析，請重試。');
+            return;
+          }
           setP3(PhaseStatus.COMPLETED);
 
           const res: GradingResults = {
@@ -165,7 +204,7 @@ export const useGrading = () => {
             phase2: { qualitative_merit_score: 0, reasoning_critique: "N/A", critical_thinking_level: "N/A" },
             phase3: solution,
             timestamp: Date.now(),
-            subjectName: selectedSubject.name,
+            subjectName: dynamicSubjectName,
             id: Math.random().toString(36).substr(2, 9),
             originalContent: "",
             isSolutionOnly: true
@@ -174,7 +213,7 @@ export const useGrading = () => {
           logActivity({
             id: res.id,
             type: 'grading',
-            title: `${selectedSubject.name} 標準詳解生成`,
+            title: `${dynamicSubjectName} 標準詳解生成`,
             description: `已完成`,
             timestamp: res.timestamp,
             data: res
@@ -191,10 +230,10 @@ export const useGrading = () => {
         }
       } else {
         const [audit, expert] = await Promise.all([
-          runLinguisticAudit(combinedContent, selectedSubject.name, finalInstructions)
+          runLinguisticAudit(combinedContent, dynamicSubjectName, finalInstructions)
             .then(res => { setP1(PhaseStatus.COMPLETED); return res; })
             .catch(err => { console.error("Audit Failed", err); setP1(PhaseStatus.ERROR); return null; }),
-          runSubjectExpertAnalysis(combinedContent, selectedSubject.name, finalInstructions)
+          runSubjectExpertAnalysis(combinedContent, dynamicSubjectName, finalInstructions)
             .then(res => { setP2(PhaseStatus.COMPLETED); return res; })
             .catch(err => { console.error("Expert Failed", err); setP2(PhaseStatus.ERROR); return null; })
         ]);
@@ -206,7 +245,7 @@ export const useGrading = () => {
         try {
           const moderator = await runModeratorSynthesis(
             combinedContent,
-            selectedSubject.name,
+            dynamicSubjectName,
             safeAudit,
             safeExpert,
             finalInstructions,
@@ -222,7 +261,7 @@ export const useGrading = () => {
           
           const res: GradingResults = {
             phase1: safeAudit, phase2: safeExpert, phase3: moderator,
-            timestamp: Date.now(), subjectName: selectedSubject.name, id: Math.random().toString(36).substr(2, 9),
+            timestamp: Date.now(), subjectName: dynamicSubjectName, id: Math.random().toString(36).substr(2, 9),
             originalContent: rawStudentText,
             isSolutionOnly: false
           };
@@ -239,7 +278,7 @@ export const useGrading = () => {
                 message: 'grading result stem snapshot',
                 data: {
                   hypothesisId: 'H2',
-                  subject: selectedSubject.name,
+                  subject: dynamicSubjectName,
                   originalContentLen: typeof rawStudentText === 'string' ? rawStudentText.length : 0,
                   stemSubCount: Array.isArray((moderator as any)?.stem_sub_results)
                     ? (moderator as any).stem_sub_results.length
@@ -266,7 +305,7 @@ export const useGrading = () => {
           logActivity({
             id: res.id,
             type: 'grading',
-            title: `${selectedSubject.name} 批改完成`,
+            title: `${dynamicSubjectName} 批改完成`,
             description: `得分：${realScore} 分`,
             timestamp: res.timestamp,
             data: res
@@ -334,7 +373,8 @@ export const useGrading = () => {
       gradingModel,
       logActivity,
       onComplete,
-      visionImages
+      visionImages,
+      { hadStudentImages: answerMode === 'image' && studentImages.length > 0 }
     );
   };
 

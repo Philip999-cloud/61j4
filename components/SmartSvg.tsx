@@ -1,24 +1,6 @@
 import React, { useMemo } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
-import { PhysicsRenderer, sanitizeAiSvgCode } from './PhysicsRenderer';
-
-function isParsableSvgMarkup(markup: string): boolean {
-  const t = markup?.trim();
-  if (!t || !t.includes('<svg')) return false;
-  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return true;
-  try {
-    const doc = new DOMParser().parseFromString(t, 'image/svg+xml');
-    if (doc.querySelector('parsererror')) return false;
-    const root = doc.documentElement;
-    return (
-      root != null &&
-      root.namespaceURI === 'http://www.w3.org/2000/svg' &&
-      root.localName === 'svg'
-    );
-  } catch {
-    return false;
-  }
-}
+import { isParsableAiSvgMarkup, PhysicsRenderer, sanitizeAiSvgCode } from './PhysicsRenderer';
 
 /**
  * Campbell 級教材 SVG：先 DOMPurify（與 PhysicsRenderer 相同設定）再 DOMParser 驗證，避免 XSS 與不合法 XML 導致白屏；
@@ -29,7 +11,7 @@ export const SmartSvg: React.FC<{ svgCode: string; className?: string }> = ({ sv
     () => sanitizeAiSvgCode(typeof svgCode === 'string' ? svgCode : String(svgCode ?? '')),
     [svgCode]
   );
-  const svgValid = useMemo(() => isParsableSvgMarkup(cleanSvg), [cleanSvg]);
+  const svgValid = useMemo(() => isParsableAiSvgMarkup(cleanSvg), [cleanSvg]);
 
   if (!svgValid) {
     return (

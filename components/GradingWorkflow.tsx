@@ -303,7 +303,8 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
         question: questionImages,
         reference: referenceImages,
         student: answerMode === 'text' ? [] : studentImages,
-      }
+      },
+      { hadStudentImages: answerMode === 'image' && studentImages.length > 0 }
     );
   };
 
@@ -419,14 +420,26 @@ export const GradingWorkflow: React.FC<Props> = ({ subject: subjectId }) => {
                       latexPreview
                     />
                   )}
-                  {standardDraft.sText && (
-                    <DraftEditor
-                      title="學生作答"
-                      initialText={standardDraft.sText}
-                      onSave={(newText) => setStandardDraft(prev => prev ? { ...prev, sText: newText } : null)}
-                      latexPreview
-                    />
+                  {answerMode === 'image' && studentImages.length > 0 && !standardDraft.sText.trim() && (
+                    <div
+                      role="alert"
+                      className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100 dark:border-amber-400/30 dark:bg-amber-500/10"
+                    >
+                      已上傳學生作答圖片，但辨識結果為空白。請在下方手動補上「學生作答」文字，或改為「文字輸入」模式後再試。
+                    </div>
                   )}
+                  {!standardDraft.sText.trim() &&
+                    !(answerMode === 'image' && studentImages.length > 0) && (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      學生作答目前為空白；若僅需標準詳解可繼續，若要批改請補上文字。
+                    </p>
+                  )}
+                  <DraftEditor
+                    title="學生作答"
+                    initialText={standardDraft.sText}
+                    onSave={(newText) => setStandardDraft(prev => prev ? { ...prev, sText: newText } : null)}
+                    latexPreview
+                  />
                 </div>
                 <div className="mt-6 flex justify-end gap-3">
                   <button onClick={() => setStandardDraft(null)} className="px-6 py-2 rounded-full text-sm font-bold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">

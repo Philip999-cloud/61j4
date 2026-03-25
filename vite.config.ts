@@ -197,6 +197,18 @@ export default defineConfig(({ mode }) => {
             next();
           });
         },
+        configurePreviewServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url?.startsWith('/RDKit_minimal.wasm') || req.url?.startsWith('./RDKit_minimal.wasm')) {
+              if (fs.existsSync(rdkitWasmPath)) {
+                res.setHeader('Content-Type', 'application/wasm');
+                fs.createReadStream(rdkitWasmPath).pipe(res);
+                return;
+              }
+            }
+            next();
+          });
+        },
       },
     ],
     define: {

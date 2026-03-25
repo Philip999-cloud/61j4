@@ -1,26 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import type { AseaRenderRequest } from '../utils/aseaVizDsl';
-import { PhysicsRenderer, sanitizeAiSvgCode } from './PhysicsRenderer';
+import { isParsableAiSvgMarkup, PhysicsRenderer, sanitizeAiSvgCode } from './PhysicsRenderer';
 import { LatexRenderer } from './LatexRenderer';
-
-function isParsableSvgMarkup(markup: string): boolean {
-  const t = markup?.trim();
-  if (!t || !t.includes('<svg')) return false;
-  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return true;
-  try {
-    const doc = new DOMParser().parseFromString(t, 'image/svg+xml');
-    if (doc.querySelector('parsererror')) return false;
-    const root = doc.documentElement;
-    return (
-      root != null &&
-      root.namespaceURI === 'http://www.w3.org/2000/svg' &&
-      root.localName === 'svg'
-    );
-  } catch {
-    return false;
-  }
-}
 
 type LocalRenderRequest = {
   engine: string;
@@ -126,7 +108,7 @@ function AseaSvg({
   data: Record<string, unknown>;
 }) {
   const clean = useMemo(() => sanitizeAiSvgCode(svgCode), [svgCode]);
-  const ok = useMemo(() => isParsableSvgMarkup(clean), [clean]);
+  const ok = useMemo(() => isParsableAiSvgMarkup(clean), [clean]);
   if (!ok) {
     return (
       <AseaRenderFallback

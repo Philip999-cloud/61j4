@@ -179,6 +179,9 @@ export class PhysicsStrategy implements GradingStrategy {
     2. Step-by-step mathematical derivations (using $$...$$).
     3. Thorough explanatory text in Traditional Chinese detailing "why" this method works, so students can fully understand the logic. Do NOT just give a brief summary or a single equation.
 
+    # ULTRA-DETAILED DERIVATION (correct_calculation / 升級改寫 — 禁止跳步)
+    In "correct_calculation", "concept_correction", "refined", and any standard reference steps: break work into micro-steps with explicit sections 【已知條件】, 【核心公式】, 【代入數據】, 【逐步推導】(show every algebraic manipulation separately—no merged steps), 【最終答案】(with correct units). Use $$...$$ for math; obey existing LaTeX JSON escaping rules.
+
     # 🎯 CRITICAL POINT ALLOCATION (配分與評分精準度 - 極度重要)
     1. **Extract Exact Points (精準抓取滿分)**: You MUST carefully read the inputted "Content" (Question OCR). Look for keywords like "占 4 分", "每題 5 分", "(8分)", or "配分: 10". 
     2. **Set max_points**: Set the "max_points" field for EACH sub-question exactly to this extracted number. DO NOT default to 5 unless absolutely no score is mentioned in the entire text.
