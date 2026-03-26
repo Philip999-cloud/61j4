@@ -1,4 +1,9 @@
 {
+  "exclude": [
+    "node_modules",
+    "android",
+    "dist"
+  ],
   "compilerOptions": {
     "target": "ES2022",
     "experimentalDecorators": true,

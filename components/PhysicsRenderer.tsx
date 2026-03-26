@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import DOMPurify from 'dompurify';
+import type { Config as DOMPurifyConfig } from 'dompurify';
 import katex from 'katex';
 import 'katex/contrib/mhchem';
 import 'katex/dist/katex.min.css';
 
 /** AI 產生 SVG：Campbell 級解剖／機制圖 — 保留 defs、漸層、遮罩、marker、filter */
-const PHYSICS_SVG_SANITIZE: DOMPurify.Config = {
+const PHYSICS_SVG_SANITIZE: DOMPurifyConfig = {
   USE_PROFILES: { svg: true, svgFilters: true, mathMl: true },
   ADD_TAGS: [
     'foreignObject',
@@ -145,7 +146,7 @@ export function isParsableAiSvgMarkup(markup: string): boolean {
 export function sanitizeAiSvgCode(raw: string): string {
   const extracted = extractFirstSvgFragment(raw);
   const withNs = ensureSvgRootXmlns(extracted);
-  return DOMPurify.sanitize(withNs, PHYSICS_SVG_SANITIZE);
+  return String(DOMPurify.sanitize(withNs, PHYSICS_SVG_SANITIZE));
 }
 
 const cleanLatexForSvg = (text: string) => {

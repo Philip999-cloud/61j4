@@ -48,9 +48,20 @@ if (typeof window !== 'undefined') {
     );
   }
 }
-/** Long polling 可避免部分網路環境下 WebChannel/QUIC 寫入失敗 (ERR_QUIC_PROTOCOL_ERROR) */
+/**
+ * WebChannel 走 HTTP/2+QUIC 時，部分網路（代理／防火牆／不穩 Wi‑Fi）會出現
+ * net::ERR_QUIC_PROTOCOL_ERROR 或 Write/channel 中斷。強制長輪詢可改走較相容的傳輸。
+ * 須關閉 experimentalAutoDetectLongPolling，否則與 force 並存違反 SDK 契約、行為未定義。
+ * experimentalLongPollingOptions：拉長單次長輪詢逾時，減少慢網路下的提早斷線。
+ *
+ * net::ERR_NAME_NOT_RESOLVED：無法解析 firestore.googleapis.com，屬 DNS／離線／VPN，非前端可程式修復。
+ */
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: false,
+  experimentalLongPollingOptions: {
+    timeoutSeconds: 25,
+  },
 });
 export const storage = getStorage(app);
 

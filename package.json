@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "test:stem-viz-fixtures": "npx --yes tsx scripts/validate-stem-viz-fixtures.mts",
     "test:watch": "vitest",
     "postinstall": "node -e \"const fs=require('fs');const p=require('path');const pub='public';fs.mkdirSync(pub,{recursive:true});[['node_modules/@rdkit/rdkit/dist/RDKit_minimal.wasm','RDKit_minimal.wasm'],['node_modules/raphael/raphael.min.js','raphael.min.js'],['node_modules/katex/dist/katex.min.css','katex.min.css'],['node_modules/jsxgraph/distrib/jsxgraph.css','jsxgraph.css'],['node_modules/jsxgraph/distrib/jsxgraphcore.js','jsxgraphcore.js'],['node_modules/3dmol/build/3Dmol-min.js','3Dmol-min.js']].forEach(([src,dest])=>{if(fs.existsSync(src))fs.copyFileSync(src,p.join(pub,dest));});const fontsSrc=p.join('node_modules','katex','dist','fonts');const fontsDest=p.join(pub,'fonts');if(fs.existsSync(fontsSrc)){fs.mkdirSync(fontsDest,{recursive:true});fs.readdirSync(fontsSrc).forEach(f=>{fs.copyFileSync(p.join(fontsSrc,f),p.join(fontsDest,f));});}\"",
     "dev": "vite",
@@ -15,12 +16,14 @@
     "release:web": "vite build",
     "preview:release": "vite preview",
     "serve:laptop": "npx --yes serve ../asea-laptop-test -l 4174 -s",
+    "serve:laptop:preview": "vite preview --outDir ../asea-laptop-test --port 4174 --host",
     "serve:dist": "vite preview --port 4173",
+    "check:release-env": "node scripts/check-release-env.mjs",
     "release:test": "vite build && vite preview",
     "cap:sync": "vite build && npx cap sync",
     "cap:android": "vite build && npx cap sync android",
-    "pack:laptop": "vite build && xcopy /E /I /Y dist ..\\asea-laptop-test",
-    "pack": "npm run cap:android && cd android && set \"JAVA_HOME=C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot\" && .\\gradlew.bat assembleRelease bundleRelease && copy app\\build\\outputs\\apk\\release\\app-release.apk ..\\app-release.apk /Y && cd .. && xcopy /E /I /Y dist ..\\asea-laptop-test"
+    "pack:laptop": "npm run check:release-env && vite build && xcopy /E /I /Y dist ..\\asea-laptop-test",
+    "pack": "npm run check:release-env && npm run cap:android && cd android && set \"JAVA_HOME=C:\\Program Files\\Microsoft\\jdk-21.0.10.7-hotspot\" && .\\gradlew.bat assembleRelease bundleRelease && copy app\\build\\outputs\\apk\\release\\app-release.apk ..\\app-release.apk /Y && cd .. && xcopy /E /I /Y dist ..\\asea-laptop-test"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
@@ -44,6 +47,7 @@
     "lightningcss": "^1.32.0",
     "lodash": "^4.17.23",
     "lucide-react": "^0.575.0",
+    "mermaid": "^11.13.0",
     "miew": "^0.11.1",
     "plotly.js-dist": "2.30.0",
     "raphael": "^2.3.0",
@@ -53,7 +57,8 @@
     "recharts": "^3.7.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
-    "smiles-drawer": "^2.1.7"
+    "smiles-drawer": "^2.1.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.2.0",

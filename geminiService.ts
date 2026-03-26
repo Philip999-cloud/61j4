@@ -42,7 +42,18 @@ Because you are generating JSON strings, ALL LaTeX backslashes MUST be double-es
 Every \\left command (e.g., \\left(, \\left[, \\left\\{) MUST have a precisely matching \\right command (e.g., \\right), \\right], \\right\\}) within the SAME formula block and the SAME line. Unmatched \\left or \\right will throw "Expected '\\right', got 'EOF'" errors. If you only need a bracket on one side, you MUST use the invisible delimiter "." on the other side (e.g., \\left. ... \\right|_{x=0}).`;
 
 const CHEMISTRY_SUBJECTS = ['化學', 'Chemistry', '自然'];
-const COMPOUNDS_SCHEMA_SUBJECTS = ['化學', 'Chemistry', '自然', '物理', 'Physics'];
+const COMPOUNDS_SCHEMA_SUBJECTS = [
+  '化學',
+  'Chemistry',
+  '自然',
+  '物理',
+  'Physics',
+  '生物',
+  '地球科學',
+  '地科',
+  'Biology',
+  'Earth',
+];
 
 /** Pro 逾時或忙碌時改走較快模型（勿與下方 Pro 模型字串相同，否則 fallback 無效） */
 const GEMINI_FLASH_FALLBACK_MODEL = 'gemini-3-flash-preview';
@@ -125,8 +136,45 @@ type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
   if (isMathStemSubject(subjectName)) {
     result += MATH_STEM_VIZ_APPENDIX;
   }
+  if (needsNaturalScienceVizAppendix(subjectName)) {
+    result += NATURAL_SCIENCE_VIZ_APPENDIX;
+  }
   return result;
 }
+
+function needsNaturalScienceVizAppendix(subjectName: string): boolean {
+  const n = subjectName.toLowerCase();
+  if (n.includes('化學') || n.includes('chemistry')) return false;
+  return (
+    n.includes('物理') ||
+    n.includes('physics') ||
+    n.includes('生物') ||
+    n.includes('biology') ||
+    n.includes('地球') ||
+    n.includes('地科') ||
+    n.includes('earth science') ||
+    n.includes('自然') ||
+    n.includes('跨科') ||
+    n.includes('integrated science')
+  );
+}
+
+const NATURAL_SCIENCE_VIZ_APPENDIX = `
+
+# NATURAL SCIENCE (non–pure-chemistry) — visualization_code structured types
+除了 svg_diagram、plotly_chart、python_plot、geometry_json、free_body_diagram 等既有類型外，可視題意使用下列 **type**（須提供可解析欄位；若無把握請改 svg_diagram 或 null）：
+- "titration_curve": 欄位 x、y 為等長數值陣列（滴定／pH–體積曲線，不需 chart_kind）
+- "circuit_schematic": "elements": [{ "kind":"battery"|"resistor"|"ammeter", "label"?, "value"? }] 串聯示意
+- "chem_smiles_2d_lone_pairs": "smiles" 字串；可選 lone_pair_atom_indices（數字陣列）或 lone_pair_markers: [{ "x":0..1, "y":0..1, "count":1|2 }]
+- "biology_punnett_square": "parent1_gametes"、"parent2_gametes" 字串陣列
+- "biology_pedigree": "nodes":[{ "id", "gender"?: "male"|"female"|"unknown", "affected"?: boolean }], "edges":[{ "from", "to" }]
+- "mermaid_flowchart": "definition" 為 Mermaid 流程圖語法字串（簡短）
+- "earth_celestial_geometry": "moon_phase" 為 new|waxing_crescent|first_quarter|waxing_gibbous|full|waning_gibbous|last_quarter|waning_crescent 之一，或提供 "caption"
+- "earth_contour_map": "isolines":[{ "points":[[x,y],...], "value"? }, ...]
+- "energy_level_diagram": "levels":[{ "label","energy"? }]，至少兩階；可選 "transitions":[{ "from_index","to_index","label"? }]，及 "sort_by_energy"（預設 true）
+- "periodic_table_highlight": "highlight_symbols":["Na","Cl",...]（1～2 字母元素符號，最多約 24 個）；可選 "title"
+仍須遵守各策略對 raster 圖像之禁止規定；overlay 僅用向量 SVG。
+`;
 
 // Enhanced Retry Logic with Exponential Backoff
 async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 3, baseDelay = 2000) {
@@ -523,6 +571,37 @@ export async function transcribeHandwrittenImages(
   }
 }
 
+/**
+ * 將分類模型回傳對齊為內部學科標籤（與 StrategyFactory、題名「自然科 (…)」一致）。
+ * 先前僅接受完全相等字串，模型若回傳「物理。」或「【物理】」會誤判為綜合自然 → 誤套 IntegratedScienceStrategy，物理批改規則不生效。
+ */
+function parseScienceClassification(raw: string): string {
+  const text = (raw || '').trim();
+  if (!text) return '自然';
+
+  const labels = ['物理', '化學', '生物', '地球科學', '綜合自然'] as const;
+  for (const label of labels) {
+    if (text === label) return label === '綜合自然' ? '自然' : label;
+  }
+
+  const inner = text
+    .replace(/^[\s【】\[\]()（）「」'".,，。、：:]+|[\s【】\[\]()（）「」'".,，。、：]+$/g, '')
+    .trim();
+  for (const label of labels) {
+    if (inner === label || inner.startsWith(label)) return label === '綜合自然' ? '自然' : label;
+  }
+
+  const c = text.replace(/\s/g, '');
+  if (c.includes('綜合自然') || c.includes('综合自然')) return '自然';
+  if (c.includes('地球科學')) return '地球科學';
+  if (c.includes('地科')) return '地球科學';
+  if (c.includes('化學')) return '化學';
+  if (c.includes('生物')) return '生物';
+  if (c.includes('物理')) return '物理';
+
+  return '自然';
+}
+
 export async function classifyScienceSubject(qText: string, rText: string): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `
@@ -548,11 +627,7 @@ export async function classifyScienceSubject(qText: string, rText: string): Prom
       1000
     );
 
-    const text = (result.text || '').trim();
-    if (['物理', '化學', '生物', '地球科學'].includes(text)) {
-      return text;
-    }
-    return '自然';
+    return parseScienceClassification(result.text || '');
   } catch (e) {
     console.warn('分類自然科失敗，降級為綜合自然', e);
     return '自然';
@@ -717,6 +792,12 @@ export async function runModeratorSynthesis(
               type: Type.OBJECT,
               properties: {
                 sub_id: { type: Type.STRING },
+                sub_stem_discipline: {
+                  type: Type.STRING,
+                  nullable: true,
+                  description:
+                    '學測自然科專用：本子題學門 physics|chemistry|biology|earth|integrated',
+                },
                 key_molecules_smiles: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
@@ -734,6 +815,113 @@ export async function runModeratorSynthesis(
                 knowledge_tags: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
                 scientific_notation_and_units: { type: Type.STRING, nullable: true },
                 internal_verification: { type: Type.STRING, nullable: true },
+                zero_compression: {
+                  type: Type.OBJECT,
+                  nullable: true,
+                  description:
+                    '五段式零跳步詳解（繁中＋LaTeX 雙跳脫）；無則 null',
+                  properties: {
+                    given: { type: Type.STRING },
+                    formula: { type: Type.STRING },
+                    substitute: { type: Type.STRING },
+                    derive: { type: Type.STRING },
+                    answer: { type: Type.STRING },
+                  },
+                },
+                ceec_answer_sheet: {
+                  type: Type.OBJECT,
+                  nullable: true,
+                  description:
+                    '擬真大考作答區：矩陣勾選表、申論欄、選擇題或虛線列；不適用則 null',
+                  properties: {
+                    mode: {
+                      type: Type.STRING,
+                      description: 'mcq | fill | short | mixed',
+                    },
+                    line_count: { type: Type.NUMBER, nullable: true },
+                    lines_per_response_field: { type: Type.NUMBER, nullable: true },
+                    response_field_labels: {
+                      type: Type.ARRAY,
+                      nullable: true,
+                      items: { type: Type.STRING },
+                    },
+                    answer_grid: {
+                      type: Type.OBJECT,
+                      nullable: true,
+                      properties: {
+                        row_labels: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        col_labels: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        solution_checks_per_row: {
+                          type: Type.ARRAY,
+                          nullable: true,
+                          items: { type: Type.NUMBER, nullable: true },
+                        },
+                      },
+                    },
+                    mcq: {
+                      type: Type.OBJECT,
+                      nullable: true,
+                      properties: {
+                        mode: {
+                          type: Type.STRING,
+                          description: 'single | multi',
+                        },
+                        options: {
+                          type: Type.ARRAY,
+                          items: { type: Type.STRING },
+                        },
+                        correct_indices: {
+                          type: Type.ARRAY,
+                          items: { type: Type.NUMBER },
+                        },
+                      },
+                    },
+                  },
+                },
+                micro_lesson: {
+                  type: Type.OBJECT,
+                  nullable: true,
+                  description:
+                    'Phase 4 圖像式微課程（教學補充卡）；不適用則 null。欄位依 variant 取捨：oxidation_timeline 需 steps；color_oscillation 需 color_from/color_to（僅 #RRGGBB）；coordination_multiply 需 bidentate_count，teeth_per_ligand 可選預設 2。',
+                  properties: {
+                    variant: {
+                      type: Type.STRING,
+                      description:
+                        'oxidation_timeline | color_oscillation | coordination_multiply',
+                    },
+                    title: { type: Type.STRING, nullable: true },
+                    caption: { type: Type.STRING, nullable: true },
+                    steps: {
+                      type: Type.ARRAY,
+                      nullable: true,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          species: { type: Type.STRING, nullable: true },
+                          oxidation_state: { type: Type.NUMBER },
+                        },
+                      },
+                    },
+                    arrows: {
+                      type: Type.ARRAY,
+                      nullable: true,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          from_index: { type: Type.NUMBER },
+                          to_index: { type: Type.NUMBER },
+                          label: { type: Type.STRING, nullable: true },
+                        },
+                      },
+                    },
+                    color_from: { type: Type.STRING, nullable: true },
+                    color_to: { type: Type.STRING, nullable: true },
+                    bidentate_count: { type: Type.NUMBER, nullable: true },
+                    teeth_per_ligand: { type: Type.NUMBER, nullable: true },
+                    result_coordination: { type: Type.NUMBER, nullable: true },
+                  },
+                },
                 student_input_parsing: {
                   type: Type.OBJECT,
                   nullable: true,
@@ -763,7 +951,11 @@ export async function runModeratorSynthesis(
                       items: {
                         type: Type.OBJECT,
                         properties: {
-                          type: { type: Type.STRING, description: 'scatter | plotly_chart | mol3d | svg_diagram' },
+                          type: {
+                            type: Type.STRING,
+                            description:
+                              'scatter | plotly_chart | mol3d | svg_diagram | chem_aromatic_ring（苯環/吡啶+孤對電子）| physics_wave_interference | physics_snell_diagram | stem_xy_chart（x/y 陣列+chart_kind line|scatter）',
+                          },
                           x: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                           y: { type: Type.ARRAY, items: { type: Type.NUMBER } },
                           mode: { type: Type.STRING },

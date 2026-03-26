@@ -13,7 +13,7 @@ import type { Compound } from '../types';
 import { adaptiveSmoothTrace } from '../utils/curveSmoothing';
 import { patchStem3dPlotlyTraces } from '../utils/plotlyStem3dPatch';
 import { patchPhysics3dTraces } from '../utils/plotlyPhysics3dPatch';
-import { FreeBodyDiagram } from './physics/FreeBodyDiagram';
+import { FreeBodyVectorDiagram } from './visualizations/FreeBodyVectorDiagram';
 import { InclinedPlaneFbd } from './physics/InclinedPlaneFbd';
 import { CollisionDiagram, type CollisionParams } from './physics/CollisionDiagram';
 import { PhysiologyMechanismDiagram, type PhysiologyLayer } from './physiology/PhysiologyMechanismDiagram';
@@ -31,6 +31,38 @@ import {
   solverModePayloadToGeometryJSON,
 } from '@/src/utils/topologyResolver';
 import { normalizePythonPlotViz } from '../utils/normalizePythonPlotViz';
+import { ChemAromaticRingDiagram } from './visualizations/ChemAromaticRingDiagram';
+import { WaveInterferenceSvg } from './visualizations/WaveInterferenceSvg';
+import { SnellLawDiagram } from './visualizations/SnellLawDiagram';
+import { StemXYChart } from './visualizations/StemXYChart';
+import { CircuitSchematicSvg } from './visualizations/CircuitSchematicSvg';
+import { ChemSmiles2DWithLonePairs } from './visualizations/ChemSmiles2DWithLonePairs';
+import { PunnettSquare } from './visualizations/PunnettSquare';
+import { PedigreeChart } from './visualizations/PedigreeChart';
+import { MermaidFlowchart } from './visualizations/MermaidFlowchart';
+import { CelestialGeometryDiagram } from './visualizations/CelestialGeometryDiagram';
+import { ContourMapSvg } from './visualizations/ContourMapSvg';
+import { TitrationCurveChart } from './visualizations/TitrationCurveChart';
+import { EnergyLevelDiagram } from './visualizations/EnergyLevelDiagram';
+import { PeriodicTableHighlights } from './visualizations/PeriodicTableHighlights';
+import {
+  parsePhase3ChemAromatic,
+  parsePhase3Snell,
+  parsePhase3StemXY,
+  parsePhase3WaveInterference,
+  parseCircuitSchematic,
+  parseChemSmiles2D,
+  parsePunnettSquare,
+  parsePedigree,
+  parseMermaidFlowchart,
+  parseEarthCelestial,
+  parseEarthContour,
+  parseTitrationCurve,
+  parseFreeBodyForces,
+  parseEnergyLevelDiagram,
+  parsePeriodicTableHighlight,
+} from '../utils/phase3VizPayload';
+import { filterRenderableVisualizations } from '../utils/validateStemVisualization';
 
 function isChemStoichiometryBlock(text: string): boolean {
   if (!text) return false;
@@ -95,13 +127,28 @@ interface VisualizationItem {
     | 'chemistry_2d'
     | 'geometry_json'
     | 'image_description'
-    | 'matplotlib';
+    | 'matplotlib'
+    | 'chem_aromatic_ring'
+    | 'physics_wave_interference'
+    | 'physics_snell_diagram'
+    | 'stem_xy_chart'
+    | 'titration_curve'
+    | 'circuit_schematic'
+    | 'chem_smiles_2d_lone_pairs'
+    | 'biology_punnett_square'
+    | 'biology_pedigree'
+    | 'mermaid_flowchart'
+    | 'earth_celestial_geometry'
+    | 'earth_contour_map'
+    | 'energy_level_diagram'
+    | 'periodic_table_highlight';
   title?: string;
   caption?: string;
   chartType?: 'line' | 'bar' | 'area' | 'scatter' | 'pie';
   xAxisLabel?: string;
   yAxisLabel?: string;
-  data?: any[];
+  /** 圖表為陣列；asea_render / chemistry_2d 等為物件 */
+  data?: any;
   layout?: any;
   svgCode?: string;
   /** 部分模型誤用 code 承載 SVG 或 python_script 本體 */
@@ -130,12 +177,24 @@ interface VisualizationItem {
   layers?: PhysiologyLayer[];
   visual_style?: string;
   interaction_enabled?: boolean;
-  /** asea_render / chemistry_2d DSL */
+  /** asea_render / chemistry_2d DSL（與圖表 traces 的 data 並存時以型別寬鬆處理） */
   engine?: string;
-  topic?: string;
-  data?: Record<string, unknown>;
   styling?: Record<string, unknown>;
   apply_layout?: boolean;
+  /** Phase 3：chem_aromatic_ring / stem_xy_chart 等 */
+  ring?: 'benzene' | 'pyridine';
+  lone_pair_on_vertices?: number[];
+  phase_offset_rad?: number;
+  amplitude?: number;
+  n1?: number;
+  n2?: number;
+  incident_deg?: number;
+  refracted_deg?: number;
+  chart_kind?: 'line' | 'scatter';
+  x?: number[];
+  y?: number[];
+  x_axis_title?: string;
+  y_axis_title?: string;
 }
 
 interface VisualizationPayload {
@@ -160,6 +219,20 @@ const ROOT_VIZ_TYPES = new Set([
   'free_body_diagram',
   'asea_render',
   'chemistry_2d',
+  'chem_aromatic_ring',
+  'physics_wave_interference',
+  'physics_snell_diagram',
+  'stem_xy_chart',
+  'titration_curve',
+  'circuit_schematic',
+  'chem_smiles_2d_lone_pairs',
+  'biology_punnett_square',
+  'biology_pedigree',
+  'mermaid_flowchart',
+  'earth_celestial_geometry',
+  'earth_contour_map',
+  'energy_level_diagram',
+  'periodic_table_highlight',
 ]);
 
 function isGeometryJsonVizRenderable(item: { type?: string; code?: unknown }): boolean {
@@ -219,6 +292,45 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
       }
       if (item.type === 'python_script') {
         return typeof item.code === 'string' && item.code.trim().length > 0;
+      }
+      if (item.type === 'chem_aromatic_ring') {
+        return parsePhase3ChemAromatic(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'stem_xy_chart') {
+        return parsePhase3StemXY(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'titration_curve') {
+        return parseTitrationCurve(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'circuit_schematic') {
+        return parseCircuitSchematic(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'chem_smiles_2d_lone_pairs') {
+        return parseChemSmiles2D(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'biology_punnett_square') {
+        return parsePunnettSquare(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'biology_pedigree') {
+        return parsePedigree(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'mermaid_flowchart') {
+        return parseMermaidFlowchart(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'earth_celestial_geometry') {
+        return parseEarthCelestial(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'earth_contour_map') {
+        return parseEarthContour(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'energy_level_diagram') {
+        return parseEnergyLevelDiagram(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'periodic_table_highlight') {
+        return parsePeriodicTableHighlight(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'physics_wave_interference' || item.type === 'physics_snell_diagram') {
+        return true;
       }
       return true;
     });
@@ -287,12 +399,9 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
 
   if (isAseaRenderVizItem(content)) return true;
   if (isInclinedPlaneFbdViz(content)) return true;
-  if (
-    content.type === 'chemistry_2d' &&
-    typeof (content as VisualizationItem).data?.molecule_string === 'string' &&
-    String((content as VisualizationItem).data?.molecule_string).trim()
-  ) {
-    return true;
+  if (content.type === 'chemistry_2d' && content.data && typeof content.data === 'object' && !Array.isArray(content.data)) {
+    const ms = (content.data as Record<string, unknown>).molecule_string;
+    if (typeof ms === 'string' && ms.trim()) return true;
   }
 
   return false;
@@ -315,6 +424,45 @@ function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, comp
       }
       if (item.type === 'python_script') {
         return typeof item.code === 'string' && item.code.trim().length > 0;
+      }
+      if (item.type === 'chem_aromatic_ring') {
+        return parsePhase3ChemAromatic(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'stem_xy_chart') {
+        return parsePhase3StemXY(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'titration_curve') {
+        return parseTitrationCurve(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'circuit_schematic') {
+        return parseCircuitSchematic(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'chem_smiles_2d_lone_pairs') {
+        return parseChemSmiles2D(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'biology_punnett_square') {
+        return parsePunnettSquare(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'biology_pedigree') {
+        return parsePedigree(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'mermaid_flowchart') {
+        return parseMermaidFlowchart(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'earth_celestial_geometry') {
+        return parseEarthCelestial(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'earth_contour_map') {
+        return parseEarthContour(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'energy_level_diagram') {
+        return parseEnergyLevelDiagram(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'periodic_table_highlight') {
+        return parsePeriodicTableHighlight(item as unknown as Record<string, unknown>) != null;
+      }
+      if (item.type === 'physics_wave_interference' || item.type === 'physics_snell_diagram') {
+        return true;
       }
       return true;
     });
@@ -891,6 +1039,11 @@ export const VisualizationRenderer: React.FC<{
 
   const vizPayload = parsedData;
 
+  const displayVisualizations = useMemo(
+    () => filterRenderableVisualizations(vizPayload?.visualizations),
+    [vizPayload?.visualizations],
+  );
+
   useEffect(() => {
     if (!isVizRendererContentRenderable(content, compoundsProp)) {
       setParsedData(null);
@@ -1008,6 +1161,24 @@ export const VisualizationRenderer: React.FC<{
        // ✅ Fix: visualization_code 裡的 visualizations 陣列中的 trace 也要處理
        if (parsed.visualizations && Array.isArray(parsed.visualizations)) {
          parsed.visualizations = parsed.visualizations.map((viz: any) => {
+           if (
+             viz.type === 'chem_aromatic_ring' ||
+             viz.type === 'physics_wave_interference' ||
+             viz.type === 'physics_snell_diagram' ||
+             viz.type === 'stem_xy_chart' ||
+             viz.type === 'titration_curve' ||
+             viz.type === 'circuit_schematic' ||
+             viz.type === 'chem_smiles_2d_lone_pairs' ||
+             viz.type === 'biology_punnett_square' ||
+             viz.type === 'biology_pedigree' ||
+             viz.type === 'mermaid_flowchart' ||
+             viz.type === 'earth_celestial_geometry' ||
+             viz.type === 'earth_contour_map' ||
+             viz.type === 'energy_level_diagram' ||
+             viz.type === 'periodic_table_highlight'
+           ) {
+             return viz;
+           }
            // 先辨識 Plotly trace：模型常在同一物件上誤帶 schema 的 cid，物理 3D 圖會因此被當成 mol3d 而無法繪製
            if (viz.type === 'mol3d') {
              return viz;
@@ -1070,7 +1241,7 @@ export const VisualizationRenderer: React.FC<{
        }
 
        // Normalize single visualization items to array format
-       if (parsed.type === 'visualization' || parsed.chartType || parsed.type === 'plotly_chart' || parsed.type === 'recharts_plot' || parsed.type === 'nanobanan_image' || parsed.type === 'mol3d' || parsed.type === 'geometry_json' || parsed.type === 'free_body_diagram' || parsed.type === 'python_plot' || parsed.type === 'python_script' || parsed.type === 'physics_collision' || parsed.type === 'physiology_mechanism' || parsed.type === 'asea_render' || parsed.type === 'chemistry_2d' || parsed.cid || parsed.smiles) {
+       if (parsed.type === 'visualization' || parsed.chartType || parsed.type === 'plotly_chart' || parsed.type === 'recharts_plot' || parsed.type === 'nanobanan_image' || parsed.type === 'mol3d' || parsed.type === 'geometry_json' || parsed.type === 'free_body_diagram' || parsed.type === 'python_plot' || parsed.type === 'python_script' || parsed.type === 'physics_collision' || parsed.type === 'physiology_mechanism' || parsed.type === 'asea_render' || parsed.type === 'chemistry_2d' || parsed.type === 'chem_aromatic_ring' || parsed.type === 'physics_wave_interference' || parsed.type === 'physics_snell_diagram' || parsed.type === 'stem_xy_chart' || parsed.type === 'titration_curve' || parsed.type === 'circuit_schematic' || parsed.type === 'chem_smiles_2d_lone_pairs' || parsed.type === 'biology_punnett_square' || parsed.type === 'biology_pedigree' || parsed.type === 'mermaid_flowchart' || parsed.type === 'earth_celestial_geometry' || parsed.type === 'earth_contour_map' || parsed.type === 'energy_level_diagram' || parsed.type === 'periodic_table_highlight' || parsed.cid || parsed.smiles) {
            // Direct visualization object detected
            const type = parsed.type === 'plotly_chart' ? 'plotly_chart' : 
                         parsed.type === 'svg_diagram' ? 'svg_diagram' : 
@@ -1083,6 +1254,20 @@ export const VisualizationRenderer: React.FC<{
                         parsed.type === 'physiology_mechanism' ? 'physiology_mechanism' :
                         parsed.type === 'asea_render' ? 'asea_render' :
                         parsed.type === 'chemistry_2d' ? 'chemistry_2d' :
+                        parsed.type === 'chem_aromatic_ring' ? 'chem_aromatic_ring' :
+                        parsed.type === 'physics_wave_interference' ? 'physics_wave_interference' :
+                        parsed.type === 'physics_snell_diagram' ? 'physics_snell_diagram' :
+                        parsed.type === 'stem_xy_chart' ? 'stem_xy_chart' :
+                        parsed.type === 'titration_curve' ? 'titration_curve' :
+                        parsed.type === 'circuit_schematic' ? 'circuit_schematic' :
+                        parsed.type === 'chem_smiles_2d_lone_pairs' ? 'chem_smiles_2d_lone_pairs' :
+                        parsed.type === 'biology_punnett_square' ? 'biology_punnett_square' :
+                        parsed.type === 'biology_pedigree' ? 'biology_pedigree' :
+                        parsed.type === 'mermaid_flowchart' ? 'mermaid_flowchart' :
+                        parsed.type === 'earth_celestial_geometry' ? 'earth_celestial_geometry' :
+                        parsed.type === 'earth_contour_map' ? 'earth_contour_map' :
+                        parsed.type === 'energy_level_diagram' ? 'energy_level_diagram' :
+                        parsed.type === 'periodic_table_highlight' ? 'periodic_table_highlight' :
                         (parsed.type === 'mol3d' || parsed.cid || parsed.smiles) ? 'mol3d' : 'recharts_plot';
            
            let vizItem: any = { ...parsed, type };
@@ -1173,7 +1358,7 @@ export const VisualizationRenderer: React.FC<{
       )}
 
       <div className="grid grid-cols-1 gap-8">
-        {vizPayload.visualizations?.map((viz, idx) => {
+        {displayVisualizations.map((viz, idx) => {
           if (!viz) return null;
           try {
             if (viz.type === 'plotly_chart') {
@@ -1209,6 +1394,323 @@ export const VisualizationRenderer: React.FC<{
                   config: viz.config
               }} />;
             } 
+            if (viz.type === 'chem_aromatic_ring') {
+              const p = parsePhase3ChemAromatic(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      {viz.title || '芳香環結構'}
+                    </h5>
+                  </div>
+                  <div className="flex min-h-[200px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60 p-4">
+                    <ChemAromaticRingDiagram ring={p.ring} lone_pair_on_vertices={p.lone_pair_on_vertices} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'physics_wave_interference') {
+              const p = parsePhase3WaveInterference(viz as unknown as Record<string, unknown>);
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      {viz.title || '波動疊加'}
+                    </h5>
+                  </div>
+                  <div className="flex min-h-[200px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60 p-3">
+                    <WaveInterferenceSvg
+                      phaseOffsetRad={p.phase_offset_rad}
+                      amplitude={p.amplitude}
+                      label={p.label}
+                    />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'physics_snell_diagram') {
+              const p = parsePhase3Snell(viz as unknown as Record<string, unknown>);
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      {viz.title || '折射／反射（斯涅爾）'}
+                    </h5>
+                  </div>
+                  <div className="flex min-h-[200px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60 p-2">
+                    <SnellLawDiagram
+                      n1={p.n1}
+                      n2={p.n2}
+                      incidentDeg={p.incident_deg}
+                      refractedDeg={p.refracted_deg}
+                    />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'stem_xy_chart') {
+              const p = parsePhase3StemXY(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      {viz.title || '資料圖表'}
+                    </h5>
+                  </div>
+                  <StemXYChart
+                    chartKind={p.chart_kind}
+                    x={p.x}
+                    y={p.y}
+                    xAxisTitle={p.x_axis_title}
+                    yAxisTitle={p.y_axis_title}
+                    caption={viz.caption}
+                  />
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'titration_curve') {
+              const p = parseTitrationCurve(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                      {viz.title || '滴定曲線'}
+                    </h5>
+                  </div>
+                  <TitrationCurveChart
+                    x={p.x}
+                    y={p.y}
+                    xAxisTitle={p.x_axis_title}
+                    yAxisTitle={p.y_axis_title}
+                    title={viz.title || '滴定曲線'}
+                  />
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'circuit_schematic') {
+              const p = parseCircuitSchematic(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      {viz.title || '電路示意圖'}
+                    </h5>
+                  </div>
+                  <div className="flex min-h-[120px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-4">
+                    <CircuitSchematicSvg payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'chem_smiles_2d_lone_pairs') {
+              const p = parseChemSmiles2D(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                      {viz.title || '2D 分子結構'}
+                    </h5>
+                  </div>
+                  <div className="flex w-full flex-col items-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-4">
+                    <ChemSmiles2DWithLonePairs payload={p} caption={viz.caption} />
+                  </div>
+                </div>
+              );
+            }
+            if (viz.type === 'biology_punnett_square') {
+              const p = parsePunnettSquare(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-lime-500" />
+                      {viz.title || '遺傳棋盤方格'}
+                    </h5>
+                  </div>
+                  <div className="rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4">
+                    <PunnettSquare payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'biology_pedigree') {
+              const p = parsePedigree(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-lime-500" />
+                      {viz.title || '譜系圖'}
+                    </h5>
+                  </div>
+                  <div className="overflow-x-auto rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4">
+                    <PedigreeChart payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'mermaid_flowchart') {
+              const p = parseMermaidFlowchart(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-lime-500" />
+                      {viz.title || '流程圖'}
+                    </h5>
+                  </div>
+                  <MermaidFlowchart definition={p.definition} />
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'earth_celestial_geometry') {
+              const p = parseEarthCelestial(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                      {viz.title || '天體／月相示意'}
+                    </h5>
+                  </div>
+                  <div className="flex justify-center rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4">
+                    <CelestialGeometryDiagram payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'earth_contour_map') {
+              const p = parseEarthContour(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                      {viz.title || '等值線示意'}
+                    </h5>
+                  </div>
+                  <div className="flex justify-center rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4">
+                    <ContourMapSvg payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'energy_level_diagram') {
+              const p = parseEnergyLevelDiagram(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                      {viz.title || '能階示意圖'}
+                    </h5>
+                  </div>
+                  <div className="flex justify-center rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4">
+                    <EnergyLevelDiagram payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            if (viz.type === 'periodic_table_highlight') {
+              const p = parsePeriodicTableHighlight(viz as unknown as Record<string, unknown>);
+              if (!p) return null;
+              return (
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div className="mb-3 flex justify-between items-center px-1">
+                    <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                      {viz.title || '週期表重點'}
+                    </h5>
+                  </div>
+                  <div className="flex justify-center rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4">
+                    <PeriodicTableHighlights payload={p} />
+                  </div>
+                  {viz.caption && (
+                    <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
+                      <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">{viz.caption}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            }
             if (viz.type === 'svg_diagram') {
               const svgMarkup =
                 (typeof viz.svgCode === 'string' && viz.svgCode.trim()) ||
@@ -1305,7 +1807,6 @@ export const VisualizationRenderer: React.FC<{
                 typeof viz.type === 'string' && PLOTLY_TRACE_TYPES.has(viz.type);
               const showMol3d =
                 !isPlotlyTraceType &&
-                viz.type !== 'plotly_chart' &&
                 (viz.type === 'mol3d' || mol3dVizHasLoadableStructure(viz));
               if (showMol3d) {
                 if (!mol3dVizHasLoadableStructure(viz)) {
@@ -1362,7 +1863,15 @@ export const VisualizationRenderer: React.FC<{
               );
             }
             if (viz.type === 'free_body_diagram' && viz.forces) {
-               return <FreeBodyDiagram key={idx} forces={viz.forces} objectShape={viz.objectShape} />;
+              const fbd = parseFreeBodyForces(viz as unknown as Record<string, unknown>);
+              if (!fbd) return null;
+              return (
+                <FreeBodyVectorDiagram
+                  key={idx}
+                  vectors={fbd.forces}
+                  objectShape={fbd.objectShape ?? viz.objectShape}
+                />
+              );
             }
             if (viz.type === 'asea_render' && isAseaRenderVizItem(viz)) {
               return (
@@ -1379,12 +1888,11 @@ export const VisualizationRenderer: React.FC<{
                 />
               );
             }
-            if (
-              viz.type === 'chemistry_2d' &&
-              viz.data &&
-              typeof viz.data.molecule_string === 'string' &&
-              viz.data.molecule_string.trim()
-            ) {
+            if (viz.type === 'chemistry_2d' && viz.data && typeof viz.data === 'object' && !Array.isArray(viz.data)) {
+              const molStr = (viz.data as Record<string, unknown>).molecule_string;
+              if (typeof molStr !== 'string' || !molStr.trim()) {
+                return null;
+              }
               return (
                 <AseaRenderBlock
                   key={idx}
@@ -1430,7 +1938,7 @@ export const VisualizationRenderer: React.FC<{
               );
             }
             if (viz.type === 'python_plot') {
-              const pp = normalizePythonPlotViz(viz as Record<string, unknown>);
+              const pp = normalizePythonPlotViz(viz as unknown as Record<string, unknown>);
               // #region agent log
               fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
                 method: 'POST',

@@ -41,6 +41,15 @@ export class IntegratedScienceStrategy implements GradingStrategy {
        - This sum MUST NOT exceed the "max_points".
        - If the student's answer is completely wrong, these values should be 0.
 
+    # 📝 ZERO-COMPRESSION (五段式 — MANDATORY)
+    For **each** object in "stem_sub_results", you MUST output "zero_compression" as an object with exactly five string fields (Traditional Chinese + LaTeX with JSON double-escaped backslashes):
+    - "given": 已知條件與題設（完整列出變數與數據）
+    - "formula": 核心公式或定律（先寫式子再代入）
+    - "substitute": 代入數據後的方程式（不可與 derive 混成一步）
+    - "derive": 逐步推導（每一步代數／邏輯變形須可讀，嚴禁跳步或合併多步為一句）
+    - "answer": 最終結果（含正確單位與有效數字說明）
+    "correct_calculation" may repeat a compact summary or mirror key lines, but the **canonical** step-by-step content for the UI is "zero_compression".
+
     # 📝 EXPECTED JSON STRUCTURE (MUST MATCH EXACTLY)
     Pay close attention to the data types. "alternative_solutions" is a STRING, not an array. "annotations" must be an array of OBJECTS.
 
@@ -54,6 +63,7 @@ export class IntegratedScienceStrategy implements GradingStrategy {
       "stem_sub_results": [
         {
           "sub_id": "題號 (例如：第1題)",
+          "sub_stem_discipline": "physics",
           "max_points": 4, // 👈 必須是從題目真實抓取到的配分
           "setup": 1.0,    // 👈 觀念/列式得分
           "process": 2.0,  // 👈 運算過程得分
@@ -64,6 +74,13 @@ export class IntegratedScienceStrategy implements GradingStrategy {
           "alternative_solutions": "一題多解的詳細說明 (請以純文字或 Markdown 字串呈現，不可使用陣列)...",
           "scientific_notation_and_units": "單位與有效數字檢核結果...",
           "internal_verification": "內部邏輯驗證...",
+          "zero_compression": {
+            "given": "已知條件…",
+            "formula": "核心公式…",
+            "substitute": "代入後…",
+            "derive": "逐步推導…",
+            "answer": "最終答案（含單位）…"
+          },
           "correct_calculation": "標準算式推導 $$...$$",
           "annotations": [
             {
@@ -72,13 +89,46 @@ export class IntegratedScienceStrategy implements GradingStrategy {
               "explanation": "錯誤原因與修正建議"
             }
           ],
-          "visualization_code": null
+          "visualization_code": null,
+          "ceec_answer_sheet": null
         }
       ]
     }
 
+    # 子題學門提示（學測自然科 — MANDATORY 每個 stem_sub_results 物件）
+    每個子題必須輸出 "sub_stem_discipline"，值僅能為以下之一（小寫英文）："physics" | "chemistry" | "biology" | "earth" | "integrated"。
+    - physics：物理；chemistry：化學；biology：生物；earth：地球科學；integrated：無法單一歸類之跨科敘述。
+    須依題幹與考查內容判斷（例如子題 A 考力學則 physics，子題 B 考板塊則 earth）。
+
+    # CEEC 擬真作答區 (ceec_answer_sheet — OPTIONAL, JSON object or null) — 學測自然科務必盡量填滿以利 UI 重現題本
+    - **矩陣勾選題**（題本列×欄打勾表）：設 "answer_grid": { "row_labels": ["第1列題文…", ...], "col_labels": ["(A)…", "(B)…", ...], "solution_checks_per_row": [0-based column index per row, or null] }，並設 "mode": "mcq"。列／欄文字須與題本一致；solution_checks_per_row 與 row_labels 等長，✓ 顯示於該欄。
+    - **單純選項列表**（無矩陣表時）：{ "mode": "mcq", "mcq": { "mode": "single" or "multi", "options": ["(A) ..."], "correct_indices": [0-based] } }.
+    - **申論／簡答**（題本先印作答欄位標題）：設 "response_field_labels": ["欄位一標題", "欄位二…"], 可選 "lines_per_response_field": 3-6；參考解答仍寫於 correct_calculation / zero_compression，UI 會在欄位**之後**顯示。
+    - **僅填空列**：{ "mode": "fill" or "short", "line_count": 3-8 }；"mixed" 時可同時含 answer_grid 或 mcq、line_count、response_field_labels。
+    Optional "line_placeholders": string[]; optional "drawing": { "base_image_url"?, "overlay_svg"? }. 不適用則 null。
+
     # SCORING INSTRUCTION
     Score Summation Check: 'setup' + 'process' + 'result' + 'logic' MUST equal the achieved score for that specific sub-question.
+
+    # Phase 3 — 高精度內建視覺化（visualizations[].type，可與 plotly/svg 並用；化學單科策略未列者仍可用 svg_diagram）
+    - chem_aromatic_ring: { "type":"chem_aromatic_ring","title":"…","ring":"benzene"|"pyridine","lone_pair_on_vertices":[2,4] }
+    - chem_smiles_2d_lone_pairs: { "type":"chem_smiles_2d_lone_pairs","smiles":"…","lone_pair_atom_indices":[…] }
+    - physics_wave_interference: { "type":"physics_wave_interference","phase_offset_rad":0,"amplitude":28,"label":"…" }
+    - physics_snell_diagram: { "type":"physics_snell_diagram","n1":1,"n2":1.33,"incident_deg":40 }
+    - stem_xy_chart: { "type":"stem_xy_chart","chart_kind":"line"|"scatter","x":[…],"y":[…],"x_axis_title":"…","y_axis_title":"…" }
+    - titration_curve: { "type":"titration_curve","x":[…],"y":[…] }
+    - circuit_schematic: { "type":"circuit_schematic","elements":[{ "kind":"battery"|"resistor"|"ammeter" }] }
+    - biology_punnett_square / biology_pedigree / mermaid_flowchart / earth_celestial_geometry / earth_contour_map / energy_level_diagram / periodic_table_highlight — 欄位見系統 NATURAL SCIENCE 附錄
+
+    # Phase 4 — 圖像式微課程 (micro_lesson — OPTIONAL, null if N/A)
+    與 visualization_code 分離的教學補充卡，掛在每個 stem_sub_results 項目末端 UI。
+    - oxidation_timeline：氧化還原、氧化數逐步追蹤。steps 為 { "label","species?","oxidation_state" }；arrows 可選 { "from_index","to_index" (0-based),"label?" }。
+    - color_oscillation：顏色周期性變化（如示範實驗）。color_from / color_to 僅允許 "#RRGGBB"。
+    - coordination_multiply：雙牙基配位簡圖。bidentate_count、teeth_per_ligand（可選，預設 2）、result_coordination（可省略則為乘積）。
+    範例：
+    "micro_lesson": { "variant":"oxidation_timeline","title":"氧化數追蹤","steps":[{"label":"反應物","species":"Fe^{2+}","oxidation_state":2},{"label":"產物","species":"Fe^{3+}","oxidation_state":3}],"arrows":[{"from_index":0,"to_index":1,"label":"氧化"}] }
+    "micro_lesson": { "variant":"color_oscillation","color_from":"#663399","color_to":"#FFCC00","caption":"酸鹼指示劑振盪示意" }
+    "micro_lesson": { "variant":"coordination_multiply","bidentate_count":3,"teeth_per_ligand":2,"result_coordination":6 }
 
     Inputs:
     1. Content: ${content}

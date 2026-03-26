@@ -179,8 +179,11 @@ export class PhysicsStrategy implements GradingStrategy {
     2. Step-by-step mathematical derivations (using $$...$$).
     3. Thorough explanatory text in Traditional Chinese detailing "why" this method works, so students can fully understand the logic. Do NOT just give a brief summary or a single equation.
 
-    # ULTRA-DETAILED DERIVATION (correct_calculation / 升級改寫 — 禁止跳步)
-    In "correct_calculation", "concept_correction", "refined", and any standard reference steps: break work into micro-steps with explicit sections 【已知條件】, 【核心公式】, 【代入數據】, 【逐步推導】(show every algebraic manipulation separately—no merged steps), 【最終答案】(with correct units). Use $$...$$ for math; obey existing LaTeX JSON escaping rules.
+    # ZERO-COMPRESSION OBJECT (五段式 — MANDATORY PER SUB-QUESTION)
+    For each "stem_sub_results" item you MUST include "zero_compression": { "given", "formula", "substitute", "derive", "answer" } — all five strings in Traditional Chinese, substantive content in each (no placeholders). Map semantically to: 已知、公式、代入、推導、解答. "derive" must show every intermediate algebraic step; do not compress. LaTeX in strings: use $$...$$ and double-escaped backslashes per JSON rules.
+
+    # ULTRA-DETAILED DERIVATION (correct_calculation — 禁止跳步)
+    In "correct_calculation", "concept_correction", "refined", and any standard reference steps: you may provide a compact parallel summary; the **primary** UI breakdown is "zero_compression". If you use sections 【已知條件】etc. here, keep them consistent with the five fields.
 
     # 🎯 CRITICAL POINT ALLOCATION (配分與評分精準度 - 極度重要)
     1. **Extract Exact Points (精準抓取滿分)**: You MUST carefully read the inputted "Content" (Question OCR). Look for keywords like "占 4 分", "每題 5 分", "(8分)", or "配分: 10". 
@@ -226,6 +229,13 @@ export class PhysicsStrategy implements GradingStrategy {
           "feedback": "Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details..."],
+          "zero_compression": {
+            "given": "已知條件…",
+            "formula": "核心公式…",
+            "substitute": "代入後…",
+            "derive": "逐步推導…",
+            "answer": "最終答案（含單位）…"
+          },
           "correct_calculation": "Standard Derivation $$...$$",
           "annotations": ["Text"],
           "visualization_code": {
@@ -238,10 +248,36 @@ export class PhysicsStrategy implements GradingStrategy {
                  "layout": {}
                }
              ]
-          }
+          },
+          "ceec_answer_sheet": null
         }
       ]
     }
+
+    # CEEC 擬真作答區 (ceec_answer_sheet — OPTIONAL, null if N/A)
+    Multiple-choice stems: { "mode": "mcq", "mcq": { "mode": "single"|"multi", "options": ["(A)...","(B)..."], "correct_indices": [0-based] } }.
+    Non-MCQ: { "mode": "fill"|"short", "line_count": 3-8 }. "mixed" = MCQ plus written lines with both "mcq" and "line_count".
+    Optional fill hints: "line_placeholders": ["提示1", ...] aligned with lines.
+    Optional drawing overlay: "drawing": { "base_image_url"?: string (題目圖 URL), "overlay_svg"?: string (完整 <svg>...</svg> 向量疊加) }.
+
+    # Phase 3 — visualization_code 內建圖（精準向量／圖表）
+    - physics_wave_interference: 同相疊加、建設性干涉示意
+    - physics_snell_diagram: 斯涅爾折射，欄位 n1,n2,incident_deg（可選 refracted_deg）
+    - stem_xy_chart: chart_kind line 或 scatter，x/y 為等長數值陣列（實驗數據、圖表題）
+    - titration_curve: x/y 等長數值陣列（滴定曲線，等同 line，不需 chart_kind）
+    - circuit_schematic: elements: [{ kind: battery|resistor|ammeter, label?, value? }]
+    - chem_aromatic_ring: 跨科有機題需標孤對電子時（benzene/pyridine + lone_pair_on_vertices）
+    - chem_smiles_2d_lone_pairs: smiles 字串 + 可選孤對電子標示（見系統附錄）
+    - energy_level_diagram: levels（至少 2 項含 label）、可選 transitions（from_index/to_index）、sort_by_energy
+    - periodic_table_highlight: highlight_symbols 陣列（元素符號字串）
+
+    # Phase 4 — 圖像式微課程 (micro_lesson — OPTIONAL, null if N/A)
+    教學用小型視覺卡，與 visualization_code 管線分開；每小題可填一個物件或 null。
+    - oxidation_timeline：跨科氧化還原／電化學相關小題，需逐步標氧化數時使用。steps + 可選 arrows（0-based 索引）。
+    - color_oscillation：涉及顏色周期性變化的示範或定性描述強化時；僅 #RRGGBB。
+    - coordination_multiply：錯合物／配位觀念（自然組含化學單元）時，用「雙牙基數×每基齒數=配位數」示意。
+    範例："micro_lesson": null 或
+    { "variant":"oxidation_timeline","steps":[{"label":"陽極","oxidation_state":0},{"label":"陰極產物","oxidation_state":-2}],"arrows":[{"from_index":0,"to_index":1}] }
     `;
   }
 }

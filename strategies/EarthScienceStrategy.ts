@@ -89,6 +89,9 @@ export class EarthScienceStrategy implements GradingStrategy {
        - This sum MUST NOT exceed the "max_points".
        - If the student's answer is completely wrong, these values should be 0.
 
+    # ZERO-COMPRESSION (五段式 — MANDATORY PER stem_sub_results ITEM)
+    Each sub-question MUST include "zero_compression": { "given", "formula", "substitute", "derive", "answer" } — all strings in Traditional Chinese, full content in each field (已知、公式、代入、推導、解答). "derive" must show data interpretation, formula use, and intermediate steps without skipping. LaTeX: $$...$$ with JSON double-escaped backslashes. "correct_calculation" is optional shorthand; the UI prioritizes "zero_compression".
+
     # SCORING INSTRUCTION
     Score Summation Check: 'setup' + 'process' + 'result' + 'logic' MUST equal student's achieved score.
 
@@ -120,6 +123,13 @@ export class EarthScienceStrategy implements GradingStrategy {
           "feedback": "Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details..."],
+          "zero_compression": {
+            "given": "已知條件與圖表數據…",
+            "formula": "所用公式或原理…",
+            "substitute": "代入數值…",
+            "derive": "逐步推算…",
+            "answer": "最終答案（含單位）…"
+          },
           "correct_calculation": "Standard Derivation $$...$$",
           "annotations": ["Text"],
           "visualization_code": {
@@ -132,10 +142,32 @@ export class EarthScienceStrategy implements GradingStrategy {
                  "layout": {}
                }
              ]
-          }
+          },
+          "ceec_answer_sheet": null
         }
       ]
     }
+
+    # CEEC 擬真作答區 (ceec_answer_sheet — OPTIONAL)
+    Use the same rules as other STEM subjects: "mcq" for choice items, "fill"|"short" with line_count for constructed response, "mixed" when both apply, else null.
+    Optional "line_placeholders"; optional "drawing" with base_image_url / overlay_svg for 作圖題。
+
+    # Phase 3 — 地科資料視覺化
+    - stem_xy_chart: 潮汐水位、氣溫曲線等用 chart_kind "line"；實測散佈用 "scatter"，附 x_axis_title / y_axis_title。
+    - titration_curve: x/y 數值陣列（不需 chart_kind）。
+    - earth_celestial_geometry: moon_phase 或 caption（月相／天體幾何簡圖）。
+    - earth_contour_map: isolines 等值線點列（天氣圖／地形示意）。
+    - periodic_table_highlight: highlight_symbols（元素題重點標示）、可選 title。
+    - mermaid_flowchart: 地質或循環流程之 Mermaid 字串。
+    - physics_snell_diagram / physics_wave_interference: 天文或大氣光學延伸題可選用。
+    - chem_aromatic_ring: 僅在題幹涉及芳香環示意且需標孤對電子時使用。
+
+    # Phase 4 — 圖像式微課程 (micro_lesson — OPTIONAL, null if N/A)
+    每小題可選填；不與 Phase 3 圖表型別混用同一管線。
+    - oxidation_timeline：地球化學／礦物氧化還原、元素價數演變等需逐步標氧化數時。
+    - color_oscillation：礦物條痕、指示劑或沉澱顏色周期性變化之教學補充；僅合法六碼 hex。
+    - coordination_multiply：岩石／礦物化學延伸涉及配位觀念時之簡圖教學。
+    範例："micro_lesson": { "variant":"coordination_multiply","title":"配位示意","bidentate_count":2,"teeth_per_ligand":2,"caption":"雙牙基×齒數" }
     `;
   }
 }

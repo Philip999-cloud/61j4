@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Star } from 'lucide-react';
 import { useFavorites } from '../hooks/useFavorites';
 import { 
@@ -17,6 +17,8 @@ import { InteractiveChineseArticle } from './chinese/InteractiveChineseArticle';
 import { InteractiveArticle } from './common/InteractiveArticle';
 import type { GeometryJSON } from '@/src/types/geometry';
 import { getStemSubAchievedPoints } from '../utils/mathScoringUtils';
+import { ScienceDisciplineBadge } from './science/ScienceDisciplineBadge';
+import { CeecDrawingSummarySection } from './ceec/CeecDrawingSummarySection';
 
 interface Props {
   results: GradingResults | ChineseWritingResults;
@@ -397,7 +399,40 @@ const ResultsDisplay: React.FC<Props> = ({
     'Chinese',
     '華文',
   ].some((k) => subjectName.includes(k));
-  const isStem = ['數學', '數甲', '數A', '數B', '物理', '化學', '生物', 'Calculus', 'Math', 'Science'].some(k => subjectName.includes(k));
+  /** 含大考「自然科」、整合科與英文 Integrated Science，與 IntegratedScienceStrategy / useGrading 命名對齊 */
+  const isStem = [
+    '數學', '數甲', '數A', '數B', '物理', '化學', '生物', '地球科學', '地科',
+    '自然科', '跨科', '自然',
+    'Calculus', 'Math', 'Science', 'Integrated',
+  ].some((k) => subjectName.includes(k));
+
+  // #region agent log
+  useEffect(() => {
+    const gr = results as GradingResults;
+    const stem = gr?.phase3?.stem_sub_results;
+    const stemSubResultsLen = Array.isArray(stem) ? stem.length : -1;
+    const stemBlockWouldRender = isStem && stemSubResultsLen > 0;
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '95c4aa' },
+      body: JSON.stringify({
+        sessionId: '95c4aa',
+        location: 'ResultsDisplay.tsx:stemGate',
+        message: 'STEM results display gate',
+        data: {
+          hypothesisId: 'H1',
+          subjectName,
+          isStem,
+          stemSubResultsLen,
+          stemBlockWouldRender,
+          isSolutionOnly,
+        },
+        timestamp: Date.now(),
+        runId: 'post-fix',
+      }),
+    }).catch(() => {});
+  }, [results, subjectName, isStem, isSolutionOnly]);
+  // #endregion
 
   const getRank = (score: number, max: number) => {
     const ratio = max > 0 ? score / max : 0;
@@ -425,6 +460,7 @@ const ResultsDisplay: React.FC<Props> = ({
               <p className="text-white/70 text-sm font-medium break-words">
                 {isSolutionOnly ? `針對「${subjectName}」的標準解答與觀念解析。` : `遵循 CEEC 標準對「${subjectName}」進行深度仲裁。`}
               </p>
+              <ScienceDisciplineBadge subjectName={subjectName} />
               {!isSolutionOnly && (
                 <div className={`px-2 py-0.5 rounded-lg text-[10px] font-black border border-current shadow-lg backdrop-blur-md flex-shrink-0 ${rank.bg} ${rank.color}`}>
                   等第：{rank.label}
@@ -590,6 +626,7 @@ const ResultsDisplay: React.FC<Props> = ({
             prefetchedQuestionGeometry={prefetchedQuestionGeometry}
             onRetryQuestionGeometryExtraction={onRetryQuestionGeometryExtraction}
           />
+          <CeecDrawingSummarySection subs={phase3.stem_sub_results} />
           
           {/* Added Science Detailed Fields — 同 project-2 */}
           {phase3.stem_sub_results.some(sub => sub.internal_verification || sub.scientific_notation_and_units) && (

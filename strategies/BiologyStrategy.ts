@@ -43,6 +43,9 @@ export class BiologyStrategy implements GradingStrategy {
        - This sum MUST NOT exceed the "max_points".
        - If the student's answer is completely wrong, these values should be 0.
 
+    # ZERO-COMPRESSION (五段式 — MANDATORY PER stem_sub_results ITEM)
+    Each sub-question MUST include "zero_compression": { "given", "formula", "substitute", "derive", "answer" } (all strings, Traditional Chinese). Content maps to 已知、公式、代入、推導、解答; "derive" must narrate mechanism/calculation steps without skipping reasoning. Use $$...$$ for math with JSON double-escaped backslashes. "correct_calculation" can summarize but must not replace the five fields.
+
     # 🚨 STRICT JSON OUTPUT FORMAT (ZERO TOLERANCE) 🚨
     You are generating a JSON string. You must output ONLY a valid JSON object matching the schema below.
     **DO NOT** use Markdown code blocks. **Double escape** all backslashes in JSON strings.
@@ -64,6 +67,13 @@ export class BiologyStrategy implements GradingStrategy {
           "feedback": "【ASEA 評分與診斷】...",
           "concept_correction": "【💡 Campbell 級知識擴充】...",
           "alternative_solutions": ["Method 1...", "Method 2..."],
+          "zero_compression": {
+            "given": "已知條件與題幹重點…",
+            "formula": "關係式或定律…",
+            "substitute": "代入題目條件…",
+            "derive": "逐步推理與機制…",
+            "answer": "結論（含必要術語）…"
+          },
           "correct_calculation": "Standard Answer (Use $$...$$)",
           "visualization_code": {
              "explanation": "🎨 圖像化記憶建議...",
@@ -74,10 +84,34 @@ export class BiologyStrategy implements GradingStrategy {
                  "svgCode": "<svg viewBox='-100 -100 200 200' xmlns='http://www.w3.org/2000/svg'>...</svg>"
                }
              ]
-          }
+          },
+          "ceec_answer_sheet": null
         }
       ]
     }
+
+    # CEEC 擬真作答區 (ceec_answer_sheet — OPTIONAL)
+    MCQ: mode "mcq" + mcq.options / mcq.mode single|multi / correct_indices (0-based). Open-ended: mode "fill"|"short" + line_count. Otherwise null.
+    Optional "line_placeholders" for fill/short rows; optional "drawing": { "base_image_url"?, "overlay_svg"? } for 作圖題預覽。
+
+    # Phase 3 — 內建視覺化類型（visualizations[]）
+    - stem_xy_chart: 實驗數據散佈或趨勢折線（chart_kind、x、y、軸標題）。
+    - titration_curve: x/y 等長數值陣列（不需 chart_kind）。
+    - biology_punnett_square: parent1_gametes, parent2_gametes 字串陣列。
+    - biology_pedigree: nodes + edges（譜系圖）。
+    - energy_level_diagram: 電子能階／躍遷示意（levels、可選 transitions）。
+    - periodic_table_highlight: 元素題重點符號陣列。
+    - mermaid_flowchart: definition（代謝路徑等流程，Mermaid 語法）。
+    - chem_aromatic_ring: 有機環與孤對電子教學示意（吡啶／苯）。
+    - chem_smiles_2d_lone_pairs: smiles + 可選孤對電子標示。
+    - physics_wave_interference / physics_snell_diagram: 跨領域物理觀念題可選用。
+
+    # Phase 4 — 圖像式微課程 (micro_lesson — OPTIONAL, null if N/A)
+    選填；與 visualization_code 不同，為末端微教學卡。
+    - oxidation_timeline：生化氧化還原（如呼吸鏈某步氧化數對照）時使用。
+    - color_oscillation：實驗顏色變化、酸鹼或指示劑相關示範之視覺補強；color_from/color_to 必須 "#RRGGBB"。
+    - coordination_multiply：涉及金屬酵素活性中心／配位觀念之簡化乘法示意時使用。
+    範例："micro_lesson": { "variant":"color_oscillation","title":"pH 指示劑","color_from":"#00AA88","color_to":"#EE4422","caption":"酸鹼來回時顏色切換" }
 
     Inputs:
     1. Content: ${content}

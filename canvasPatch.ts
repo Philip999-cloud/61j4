@@ -17,18 +17,22 @@ export function applyCanvasPatch(): () => void {
       opts = Object.assign({ willReadFrequently: true }, opts || {});
     }
     return origGetContext.call(this, id, opts);
-  } as GetContextFn;
+  } as unknown as GetContextFn;
 
   let restoreOffscreen: (() => void) | undefined;
   const OC = typeof globalThis !== 'undefined' ? (globalThis as { OffscreenCanvas?: typeof OffscreenCanvas }).OffscreenCanvas : undefined;
   if (OC?.prototype?.getContext) {
-    const origOc = OC.prototype.getContext as GetContextFn;
+    const origOc = OC.prototype.getContext as typeof OC.prototype.getContext;
     OC.prototype.getContext = function (this: OffscreenCanvas, id: string, opts?: CanvasRenderingContext2DSettings) {
       if (id === '2d') {
         opts = Object.assign({ willReadFrequently: true }, opts || {});
       }
-      return origOc.call(this, id, opts);
-    } as GetContextFn;
+      return (origOc as (this: OffscreenCanvas, contextId: string, options?: unknown) => unknown).call(
+        this,
+        id,
+        opts,
+      );
+    } as typeof OC.prototype.getContext;
     restoreOffscreen = () => {
       OC.prototype.getContext = origOc;
     };

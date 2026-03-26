@@ -13,7 +13,15 @@ const commonTailSteps = [
   }
 ];
 
-const commonOpts = { showProgress: true, animate: true, doneBtnText: '完成', closeBtnText: '跳過', nextBtnText: '下一步', prevBtnText: '上一步' };
+/** driver.js 執行時支援 closeBtnText，型別定義可能落後 */
+const commonOpts = {
+  showProgress: true,
+  animate: true,
+  doneBtnText: '完成',
+  closeBtnText: '跳過',
+  nextBtnText: '下一步',
+  prevBtnText: '上一步',
+} as Parameters<typeof driver>[0];
 
 export const startSubjectTour = (subjectId: string) => {
   const isChinese = subjectId.includes('chinese');
@@ -29,7 +37,7 @@ export const startSubjectTour = (subjectId: string) => {
     closeBtnText: '跳過',
     nextBtnText: '下一步',
     prevBtnText: '上一步',
-  });
+  } as Parameters<typeof driver>[0]);
 
   let steps: any[] = [];
 
@@ -72,7 +80,7 @@ export const startProfileTour = () => {
     { element: '#tour-profile-handle', popover: { title: '🆔 專屬 ID', description: '這是您的唯一識別碼。' } },
     { element: '#tour-profile-bio', popover: { title: '📝 個人簡介', description: '寫下您的學習目標吧！' } },
     { element: '#tour-profile-advanced', popover: { title: '🔒 進階資料', description: '設定性別與生日等隱私資訊。' } }
-  ]}).drive();
+  ]} as Parameters<typeof driver>[0]).drive();
 };
 
 export const startActivityTour = () => {
@@ -83,7 +91,7 @@ export const startActivityTour = () => {
     { element: '#tour-activity-wallet', popover: { title: '💳 錢包管理', description: '綁定信用卡，享受無縫升級體驗。' } },
     { element: '#tour-activity-sub', popover: { title: '🚀 升級 PRO', description: '點擊這裡解鎖無限次極速 AI 批改！' } },
     { element: '#tour-activity-ref', popover: { title: '🎁 邀請獎勵', description: '分享推薦碼給同學，雙方都能獲得點數！' } }
-  ]}).drive();
+  ]} as Parameters<typeof driver>[0]).drive();
 };
 
 export const startSettingsTour = () => {
@@ -92,7 +100,7 @@ export const startSettingsTour = () => {
     { element: '#tour-set-privacy', popover: { title: '👁️ 隱私模式', description: '在公共場合可隱藏您的敏感成績與數據。' } },
     { element: '#tour-set-binding', popover: { title: '🔗 帳號綁定', description: '綁定 Google 或 Apple，確保資料永不遺失。' } },
     { element: '#tour-set-danger', popover: { title: '⚠️ 危險區域', description: '登出或永久註銷帳號的地方。' } }
-  ]}).drive();
+  ]} as Parameters<typeof driver>[0]).drive();
 };
 
 export const startSupportTour = () => {
@@ -101,5 +109,5 @@ export const startSupportTour = () => {
     { element: '#tour-sup-issue', popover: { title: '🐛 問題回報', description: 'AI 批改不準確？隨時填單回報給我們。' } },
     { element: '#tour-sup-human', popover: { title: '🧑💻 真人專員', description: '需要進階協助？點擊轉接真人服務。' } },
     { element: '#tour-sup-faq', popover: { title: '❓ 常見問題', description: '了解 VLM 與 CoT 技術是如何幫您批改的。' } }
-  ]}).drive();
+  ]} as Parameters<typeof driver>[0]).drive();
 };

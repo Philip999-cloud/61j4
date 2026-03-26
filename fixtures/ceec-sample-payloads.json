@@ -1,0 +1,56 @@
+{
+  "ceec_mcq_single": {
+    "mode": "mcq",
+    "mcq": {
+      "mode": "single",
+      "options": ["(A) 選項一", "(B) 選項二"],
+      "correct_indices": [0]
+    }
+  },
+  "ceec_fill_with_drawing": {
+    "mode": "fill",
+    "line_count": 3,
+    "line_placeholders": ["第(1)空", "第(2)空", "簡答"],
+    "drawing": {
+      "overlay_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><circle cx=\"50\" cy=\"50\" r=\"20\" fill=\"none\" stroke=\"currentColor\"/></svg>"
+    }
+  },
+  "viz_titration_curve": {
+    "type": "titration_curve",
+    "title": "酸鹼滴定",
+    "x": [0, 10, 20, 30],
+    "y": [2, 4, 10, 12]
+  },
+  "viz_circuit": {
+    "type": "circuit_schematic",
+    "elements": [
+      { "kind": "battery" },
+      { "kind": "resistor", "value": "R" },
+      { "kind": "ammeter" }
+    ]
+  },
+  "viz_punnett": {
+    "type": "biology_punnett_square",
+    "parent1_gametes": ["A", "a"],
+    "parent2_gametes": ["B", "b"]
+  },
+  "viz_mermaid": {
+    "type": "mermaid_flowchart",
+    "definition": "flowchart LR\n  A[光反應] --> B[暗反應]"
+  },
+  "viz_energy_levels": {
+    "type": "energy_level_diagram",
+    "title": "氫原子能階示意",
+    "levels": [
+      { "label": "n=3", "energy": -1.5 },
+      { "label": "n=2", "energy": -3.4 },
+      { "label": "n=1", "energy": -13.6 }
+    ],
+    "transitions": [{ "from_index": 1, "to_index": 2, "label": "放出光子" }]
+  },
+  "viz_periodic": {
+    "type": "periodic_table_highlight",
+    "title": "鹼金屬與鹵素",
+    "highlight_symbols": ["Li", "Na", "F", "Cl"]
+  }
+}

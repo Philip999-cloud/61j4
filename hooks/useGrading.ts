@@ -140,6 +140,16 @@ export const useGrading = () => {
     if (!user) { setShowAuth(true); return; }
     if (!profile?.isPro && (profile?.credits === undefined || profile.credits <= 0)) { setShowPaywall(true); return; }
 
+    if (!qText.trim() && !rText.trim()) {
+      setP1(PhaseStatus.IDLE);
+      setP2(PhaseStatus.IDLE);
+      setP3(PhaseStatus.ERROR);
+      setGradingStatus(
+        '題目與詳解／參考的轉錄內容皆為空，無法呼叫批改 API。請上傳圖片並完成轉錄，或於預覽中手動補上文字後再試。'
+      );
+      return;
+    }
+
     const hasStudentInput = sText.trim().length > 0;
     const finalInstructions = customInstructions + getPersonaInstructions(gradingModel);
 

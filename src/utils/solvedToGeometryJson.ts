@@ -27,7 +27,7 @@ export function solvedToGeometryJson(solved: SolvedGeometry): GeometryJSON {
       primary_shape: shape_type,
       polygon_sides: n,
       is_regular: true,
-      has_diagonals,
+      has_diagonals: hasDiagonals,
       intersection_count: interCount,
       has_coordinate_axes: false,
       has_shaded_region: hasShaded,

@@ -4,7 +4,7 @@ import { paymentService, ProductDetails } from '@/services/paymentService';
 import { useAppContext } from '@/contexts/AppContext';
 
 export function PaywallModal() {
-  const { showPaywall, setShowPaywall, upgradeToPro } = useAppContext();
+  const { showPaywall, setShowPaywall, upgradeToPro, user } = useAppContext();
   const [products, setProducts] = useState<ProductDetails[]>([]);
   const [selectedTier, setSelectedTier] = useState<string>('half_year');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -29,7 +29,7 @@ export function PaywallModal() {
     setError(null);
     
     try {
-      const success = await paymentService.purchasePackage(product.id);
+      const success = await paymentService.purchasePackage(product.id, user?.uid ?? '');
       if (success) {
         upgradeToPro();
         setShowPaywall(false);

@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { User, Bell, CreditCard, HelpCircle, Search, ChevronDown, ChevronUp, MessageCircle, Trash2, Star } from 'lucide-react';
 import { paymentService, ProductDetails } from '../../services/paymentService';
 import { useAppContext } from '../../contexts/AppContext';
-import { paymentService, ProductDetails } from '../../services/paymentService';
-import { useAppContext } from '../../contexts/AppContext';
 
 // --- 1. ProfileProgressWidget ---
 export const ProfileProgressWidget: React.FC = () => {
@@ -148,7 +146,7 @@ export const SmartPaywallMockup: React.FC = () => {
   const [selectedTier, setSelectedTier] = useState<string>('half_year');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { updateProfileContext } = useAppContext();
+  const { upgradeToPro, user } = useAppContext();
 
   useEffect(() => {
     paymentService.fetchProducts()
@@ -175,15 +173,9 @@ export const SmartPaywallMockup: React.FC = () => {
     setError(null);
     
     try {
-      const success = await paymentService.purchasePackage(product.id);
+      const success = await paymentService.purchasePackage(product.id, user?.uid ?? '');
       if (success) {
-        if (updateProfileContext) {
-          updateProfileContext({ 
-            isPro: true, 
-            trialStartDate: null,
-            dailyQuota: 9999
-          });
-        }
+        upgradeToPro();
         alert('升級成功！您現在可以享受 Pro 方案的所有功能。');
       } else {
         setError('付款處理失敗，請稍後再試。');

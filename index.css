@@ -98,3 +98,48 @@ html, body, #root {
 html {
   overscroll-behavior-y: none;
 }
+
+/* Phase 2 CEEC：擬真手寫區與虛線底線（沿用主題邊色） */
+.font-handwriting {
+  font-family: "DFKai-SB", "BiauKai", "KaiTi", "STKaiti", "FangSong", "SimSun", serif;
+}
+.ceec-underline {
+  border-bottom: 1px dashed var(--border-color);
+  min-height: 1.75rem;
+}
+
+/* Phase 3：孤對電子呼吸燈（僅 opacity / scale，沿用 currentColor） */
+@keyframes vizLonePairPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+.viz-lone-pair-pulse {
+  transform-origin: center;
+  animation: vizLonePairPulse 2.2s ease-in-out infinite;
+}
+
+/* Phase 4 微課程：顏色振盪（僅使用已驗證 #RRGGBB 的 CSS 變數） */
+@keyframes microLessonColorOsc {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.micro-lesson-color-osc {
+  background: linear-gradient(90deg, var(--ml-c1), var(--ml-c2), var(--ml-c1));
+  background-size: 200% 100%;
+  animation: microLessonColorOsc 3.2s ease-in-out infinite;
+  box-shadow: 0 0 24px color-mix(in srgb, var(--ml-c1) 28%, transparent);
+}

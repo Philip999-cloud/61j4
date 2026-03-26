@@ -76,7 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // 高解析度與畫質設定（教育場景：16:9 適合教科書插圖，2K 提升清晰度）
   const HIGH_QUALITY_IMAGE_CONFIG = {
-    responseModalities: ['TEXT', 'IMAGE'] as const,
+    responseModalities: ['TEXT', 'IMAGE'] as string[],
     imageConfig: {
       imageSize: '2K' as const,      // 1K | 2K | 4K，預設 1K 畫質較差
       aspectRatio: '16:9' as const, // 教育插圖常用比例
