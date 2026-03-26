@@ -282,12 +282,20 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return Promise.race([promise, timer]);
 }
 
+/** 模型常複製提示詞裡的 JS 風格註解（非合法 JSON）；於解析前剔除以降低「Colon expected」類錯誤 */
+function stripEchoedJsCommentsFromModelJson(s: string): string {
+  return s
+    .replace(/\s*\/\/\s*👈[^\n\r]*/g, '')
+    .replace(/\s*\/\/\s*visualization_code[^\n\r]*/gi, '');
+}
+
 // Enhanced JSON Parsing with Multi-Stage Recovery
 function safeJsonParse(text: string | null | undefined): any {
   if (!text) return null;
   
   // 1. Clean Markdown Code Blocks
   let cleaned = text.replace(/^```(?:json)?|```$/g, '').replace(/^```\n?/g, '').replace(/\n?```$/g, '').trim();
+  cleaned = stripEchoedJsCommentsFromModelJson(cleaned);
 
   // Fix common LaTeX commands that start with valid JSON escape characters (b, f, n, r, t)
   // If the AI outputs \begin instead of \\begin, JSON.parse would silently convert \b to backspace.
@@ -334,6 +342,15 @@ function safeJsonParse(text: string | null | undefined): any {
             return JSON.parse(repaired2);
           } catch (e5) {
             console.error("JSON Parse 最終失敗", e5);
+            // #region agent log
+            {
+              const posMatch = String((e5 as Error)?.message || '').match(/position\s+(\d+)/i);
+              const pos = posMatch ? parseInt(posMatch[1], 10) : NaN;
+              const start = Number.isFinite(pos) ? Math.max(0, pos - 40) : 300;
+              const end = Number.isFinite(pos) ? pos + 40 : 380;
+              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b5019'},body:JSON.stringify({sessionId:'7b5019',runId:'pre-fix',hypothesisId:'H1-H3',location:'geminiService.ts:safeJsonParse:finalFail',message:'safeJsonParse final failure',data:{errMsg:String((e5 as Error)?.message||e5),textLen:cleaned.length,sliceAround:cleaned.slice(start,end),hasDoubleSlashComment:/\/\/\s*👈/.test(cleaned),hasVizLineComment:/\/\/\s*visualization_code/i.test(cleaned)},timestamp:Date.now()})}).catch(()=>{});
+            }
+            // #endregion
             return null;
           }
         }

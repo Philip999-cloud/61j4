@@ -49,6 +49,7 @@ export class BiologyStrategy implements GradingStrategy {
     # 🚨 STRICT JSON OUTPUT FORMAT (ZERO TOLERANCE) 🚨
     You are generating a JSON string. You must output ONLY a valid JSON object matching the schema below.
     **DO NOT** use Markdown code blocks. **Double escape** all backslashes in JSON strings.
+    **Never use \`//\` comments inside JSON** (invalid JSON). Scoring: max_points from the prompt; setup=concept/setup work; process=procedure; result=final correctness; logic=bonus reasoning.
 
     Structure:
     {
@@ -59,11 +60,11 @@ export class BiologyStrategy implements GradingStrategy {
       "stem_sub_results": [
         {
           "sub_id": "Q1",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "【ASEA 評分與診斷】...",
           "concept_correction": "【💡 Campbell 級知識擴充】...",
           "alternative_solutions": ["Method 1...", "Method 2..."],

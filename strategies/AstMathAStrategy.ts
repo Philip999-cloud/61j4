@@ -176,6 +176,7 @@ export class AstMathAStrategy implements GradingStrategy {
     3. Phase 2 Expert Analysis: ${JSON.stringify(expert)}
 
     # OUTPUT JSON STRUCTURE (STRICT ENFORCEMENT)
+    Valid JSON only — **no \`//\` comment lines**. visualization_code is auxiliary only.
     {
       "final_score": 0,
       "max_score": 0,
@@ -185,11 +186,11 @@ export class AstMathAStrategy implements GradingStrategy {
       "stem_sub_results": [
         {
           "sub_id": "題號",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details..."],
@@ -199,7 +200,6 @@ export class AstMathAStrategy implements GradingStrategy {
             "explanation": "...",
             "visualizations": [ { "type": "plotly_chart", ... } ]
           }
-          // visualization_code 僅輔助圖示，不得刪減或取代上列評分欄位
         }
       ]
     }

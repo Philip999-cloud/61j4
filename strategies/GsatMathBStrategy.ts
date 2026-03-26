@@ -141,6 +141,7 @@ export class GsatMathBStrategy implements GradingStrategy {
     3. Phase 2 Expert Analysis: ${JSON.stringify(expert)}
 
     Output JSON (ModeratorSynthesis) ONLY. Do NOT use markdown code blocks (\`\`\`).
+    **No \`//\` inside JSON.** visualization_code is auxiliary only.
     
     {
       "final_score": 0,
@@ -151,11 +152,11 @@ export class GsatMathBStrategy implements GradingStrategy {
       "stem_sub_results": [
         {
           "sub_id": "Q1",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "Step-by-Step Analysis...",
           "concept_correction": "指出盲點",
           "alternative_solutions": ["Method 1 $$...$$", "Method 2", "Method 3", "Method 4", "Method 5", "Method 6", "Method 7"],
@@ -172,7 +173,6 @@ export class GsatMathBStrategy implements GradingStrategy {
               }
             ]
           }
-          // visualization_code 僅輔助圖示，不得刪減或取代上列評分欄位
         }
       ]
     }

@@ -103,6 +103,7 @@ export class EarthScienceStrategy implements GradingStrategy {
     # OUTPUT JSON STRUCTURE (STRICT ENFORCEMENT)
     You MUST output ONLY valid JSON. 
     **ABSOLUTELY NO MARKDOWN CODE BLOCKS.**
+    **No \`//\` comments in JSON.** max_points from stem; setup/process/result/logic as defined in scoring rules above.
     
     Copy and fill out this EXACT structure:
 
@@ -115,11 +116,11 @@ export class EarthScienceStrategy implements GradingStrategy {
       "stem_sub_results": [
         {
           "sub_id": "題號",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details..."],

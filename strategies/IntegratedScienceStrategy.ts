@@ -29,9 +29,11 @@ export class IntegratedScienceStrategy implements GradingStrategy {
        - **2D Planar Structures (SMILES)**: Use \`<smiles>SMILES_STRING</smiles>\` for general chemical formulas, 2D planar reactions, and basic Q&A. Example: \`<smiles>CC(=O)O</smiles>\`
        - **3D Interactive Models (PubChem CID)**: Use \`<mol3d>CID_NUMBER</mol3d>\` for concepts involving steric hindrance (空間障礙), stereoisomers (cis/trans, optical), conformations (chair/boat forms), or large proteins. Example for Cyclohexane: \`<mol3d>8078</mol3d>\`
 
-    5. **VISUALIZATION (OPTIONAL & SAFE)**:
-       Do NOT force a 3D plot unless the problem explicitly involves 3D spatial concepts. 
-       For most biology, chemistry, and text-based science problems, you MUST set "visualization_code" to \`null\`. Do not waste tokens on unnecessary charts.
+    5. **VISUALIZATION (學測自然科 — MANDATORY，每子題至少一個)**:
+       對 **stem_sub_results 的每一個物件**，"visualization_code" **禁止為 null**；須輸出 **一個**可渲染之 JSON（見下方 Phase 3 類型），與該子題考查內容直接相關。
+       - 有數值趨勢：優先 \`stem_xy_chart\`（line/scatter）；化學結構：\`chem_smiles_2d_lone_pairs\` 或 \`chem_aromatic_ring\`；遺傳：\`biology_punnett_square\`／\`biology_pedigree\`；地科：\`earth_celestial_geometry\`／\`earth_contour_map\`；電路：\`circuit_schematic\`；物理波動／折射：\`physics_wave_interference\`／\`physics_snell_diagram\`。
+       - 純概念敘述仍須給圖：最小可用 \`mermaid_flowchart\`（\`definition\` 為單行或 \`\\\\n\` 雙跳脫換行之 Mermaid 文字）或 \`energy_level_diagram\`／\`periodic_table_highlight\` 等輕量 payload。
+       - 勿為了省 token 省略；Plotly 3D 僅在題意明確需要空間關係時使用，其餘用上述結構化 type 即可。
 
     # 🎯 CRITICAL POINT ALLOCATION (配分與評分精準度 - 極度重要)
     1. **Extract Exact Points (精準抓取滿分)**: You MUST carefully read the inputted "Content" (Question OCR). Look for keywords like "占 4 分", "每題 5 分", "(8分)", or "配分: 10". 
@@ -52,6 +54,7 @@ export class IntegratedScienceStrategy implements GradingStrategy {
 
     # 📝 EXPECTED JSON STRUCTURE (MUST MATCH EXACTLY)
     Pay close attention to the data types. "alternative_solutions" is a STRING, not an array. "annotations" must be an array of OBJECTS.
+    **JSON 內嚴禁 \`//\` 註解**（非合法 JSON）。配分語意：max_points 須自題幹抓取；setup=觀念／列式、process=運算過程、result=結果正確性、logic=邏輯加分。
 
     {
       "final_score": 0,
@@ -64,11 +67,11 @@ export class IntegratedScienceStrategy implements GradingStrategy {
         {
           "sub_id": "題號 (例如：第1題)",
           "sub_stem_discipline": "physics",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "詳細分析學生作答...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": "一題多解的詳細說明 (請以純文字或 Markdown 字串呈現，不可使用陣列)...",
@@ -89,7 +92,7 @@ export class IntegratedScienceStrategy implements GradingStrategy {
               "explanation": "錯誤原因與修正建議"
             }
           ],
-          "visualization_code": null,
+          "visualization_code": { "type": "stem_xy_chart", "chart_kind": "line", "x": [0, 1, 2], "y": [0, 1, 4], "x_axis_title": "t", "y_axis_title": "x" },
           "ceec_answer_sheet": null
         }
       ]
@@ -110,7 +113,7 @@ export class IntegratedScienceStrategy implements GradingStrategy {
     # SCORING INSTRUCTION
     Score Summation Check: 'setup' + 'process' + 'result' + 'logic' MUST equal the achieved score for that specific sub-question.
 
-    # Phase 3 — 高精度內建視覺化（visualizations[].type，可與 plotly/svg 並用；化學單科策略未列者仍可用 svg_diagram）
+    # Phase 3 — 高精度內建視覺化（**每子題 visualization_code 本體**，單一物件或 { "explanation"?, "visualizations":[…] } 包一層皆可，以前端 VisualizationRenderer 可解析為準）
     - chem_aromatic_ring: { "type":"chem_aromatic_ring","title":"…","ring":"benzene"|"pyridine","lone_pair_on_vertices":[2,4] }
     - chem_smiles_2d_lone_pairs: { "type":"chem_smiles_2d_lone_pairs","smiles":"…","lone_pair_atom_indices":[…] }
     - physics_wave_interference: { "type":"physics_wave_interference","phase_offset_rad":0,"amplitude":28,"label":"…" }

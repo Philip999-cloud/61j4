@@ -13,15 +13,32 @@ const PAREN_IN_NATURAL = /自然科\s*[（(]\s*([^）)]+)\s*[）)]/;
 
 /** 由科目名稱解析學門（不含單題標籤；勿用 includes('自然') 當生物，否則「自然科」全誤判） */
 export function resolveStemDisciplineFromSubject(subjectName: string): StemDisplayDiscipline {
-  const s = (subjectName || '').trim();
+  const s = (subjectName || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+  if (!s) return 'math';
+  /** 題目／活動標題中「物 理」「物　理」等會導致 includes('物理') 失敗，分科物理被判成數學 */
+  const compactCJK = s.replace(/\s+/g, '');
   const lower = s.toLowerCase();
   const inner = (s.match(PAREN_IN_NATURAL)?.[1] || '').trim();
   const inParen = (t: RegExp) => inner && t.test(inner);
 
-  if (inParen(/化學/i) || lower.includes('化學') || lower.includes('chemistry') || /\bchem\b/.test(lower))
+  if (
+    inParen(/化學/i) ||
+    s.includes('化學') ||
+    compactCJK.includes('化學') ||
+    lower.includes('chemistry') ||
+    /\bchem\b/.test(lower)
+  ) {
     return 'chemistry';
-  if (inParen(/物理/i) || lower.includes('物理') || lower.includes('physics') || /\bphys\b/.test(lower))
+  }
+  if (
+    inParen(/物理/i) ||
+    s.includes('物理') ||
+    compactCJK.includes('物理') ||
+    lower.includes('physics') ||
+    /\bphys\b/.test(lower)
+  ) {
     return 'physics';
+  }
   if (inParen(/生物/i) || lower.includes('生物') || lower.includes('biology')) return 'biology';
   if (inParen(/地科|地球/i) || lower.includes('地球科學') || lower.includes('地科') || lower.includes('earth science')) return 'earth';
   if (
@@ -225,8 +242,17 @@ export const transformToMathSteps = (subResult: StemSubScore, subjectName: strin
       result: "CONCLUSION & PRECISION",
       resultFb: "答案與單位、有效數字或題意要求一致",
     };
+  } else if (discipline === 'physics') {
+    labels = {
+      setup: "PHYSICAL MODELING (SETUP)",
+      setupFb: "正確建立物理模型、受力／情境圖與已知條件",
+      process: "QUANTITATIVE ANALYSIS (PROCESS)",
+      processFb: "正確選用定律、代數推導與單位／因次一致",
+      result: "VALIDATED RESULT (ANSWER)",
+      resultFb: "數值、方向與有效數字符合題意與實驗精度",
+    };
   } else {
-    // math / physics
+    // math
     labels = {
       setup: "Conceptual Modeling (Definition)",
       setupFb: "正確設定公式與變數定義",
