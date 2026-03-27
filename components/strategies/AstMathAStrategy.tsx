@@ -1,12 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { StemSubScore, MathStep, TextAnnotation, ParsedMathSegment } from '../../types';
-import { transformToMathSteps, calculateStepwiseScore, getStepColor, getStepIcon } from '../../utils/mathScoringUtils';
+import {
+  transformToMathSteps,
+  calculateStepwiseScore,
+  getStepColor,
+  getStepIcon,
+  resolveStemDisciplineForSub,
+  resolveStemDisciplineFromSubject,
+  stemDisplayDisciplineLabelZh,
+} from '../../utils/mathScoringUtils';
 import { VisualizationRenderer } from '../VisualizationRenderer';
 import LatexRenderer from '../LatexRenderer';
+import { ZeroCompressionBlocks, zeroCompressionHasContent } from '../science/ZeroCompressionBlocks';
+import { CeecAnswerSheetFooter } from '../ceec/CeecAnswerSheetFooter';
+import { MicroLessonBlock } from '../micro-lessons/MicroLessonBlock';
 import { Viewer3D } from '../Viewer3D';
 import { enhanceTranscriptionMathForLatex } from '../../utils/stemTranscriptionMath';
 import type { GeometryJSON } from '@/src/types/geometry';
+import {
+  filterRenderableVisualizations,
+  geometryJsonItemRenderable,
+} from '../../utils/validateStemVisualization';
 
 interface Props {
   data: StemSubScore[];
@@ -41,38 +56,6 @@ const InteractiveMathText: React.FC<{
 }> = ({ fullText, annotations, segments }) => {
   const [activeItem, setActiveItem] = useState<{ type: string; explanation: string; correction?: string } | null>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
-
-  // #region agent log
-  useEffect(() => {
-    const useSeg = Array.isArray(segments) && segments.length > 0;
-    const ft = typeof fullText === 'string' ? fullText : String(fullText ?? '');
-    const joined = useSeg
-      ? (segments as ParsedMathSegment[]).map((s) => s.text || '').join('\n')
-      : '';
-    const ftN = ft.replace(/\s+/g, '');
-    const jN = joined.replace(/\s+/g, '');
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-      body: JSON.stringify({
-        sessionId: 'b584db',
-        location: 'AstMathAStrategy.tsx:InteractiveMathText',
-        message: 'original response render path',
-        data: {
-          hypothesisId: 'H1',
-          useSegmentsBranch: useSeg,
-          segmentCount: useSeg ? segments!.length : 0,
-          annotationCount: Array.isArray(annotations) ? annotations.length : 0,
-          fullTextLen: ft.length,
-          joinedSegmentsLen: joined.length,
-          likelyDroppedContent: useSeg && ftN.length > 0 && jN.length < ftN.length * 0.85,
-        },
-        timestamp: Date.now(),
-        runId: 'post-fix-1',
-      }),
-    }).catch(() => {});
-  }, [fullText, segments, annotations]);
-  // #endregion
 
   const stripSpaceCmd = (s: string) => s.replace(/\\(v|h)space\{?[a-zA-Z0-9\.\-\\]*\}?/g, ' ').trim();
 
@@ -248,6 +231,23 @@ const InteractiveMathText: React.FC<{
   );
 };
 
+/** 擬真作答區：無 ceec_answer_sheet 時仍顯示格式範例（來自標準解，非批改邏輯） */
+function buildCeecExampleFormatHint(sub: StemSubScore): string {
+  const z = sub.zero_compression;
+  const parts: string[] = [];
+  if (z?.answer?.trim()) {
+    parts.push(`【建議結論／填答方向】\n${z.answer.trim()}`);
+  }
+  const calc = typeof sub.correct_calculation === 'string' ? sub.correct_calculation.trim() : '';
+  if (calc) {
+    const cap = 900;
+    parts.push(
+      `【書寫／演算參考（請依試卷欄位調整行距）】\n${calc.length > cap ? `${calc.slice(0, cap)}…` : calc}`
+    );
+  }
+  return parts.join('\n\n').trim();
+}
+
 const renderAlternativeSolutions = (content: any) => {
   if (!content) return null;
   if (typeof content === 'string') return <LatexRenderer content={content} />;
@@ -320,6 +320,18 @@ const AstMathAStrategy: React.FC<Props> = ({
       {rows.map((sub, idx) => {
         if (!sub) return null;
         try {
+          /** 分科物理／化學：科目名稱與下方三向度同源，避免重複四格＋進度條；以 resolve 為準（含英文 Chemistry／Physics） */
+          const stemSubjectBase = resolveStemDisciplineFromSubject(subjectName);
+          /** 與 StrategyFactory 數學甲路由一致：五段式與長篇參考詳解並存僅限 AST 數學甲 */
+          const isAstMathASubject =
+            subjectName.includes('數學甲') ||
+            subjectName.includes('數甲') ||
+            /math\s*a\s*\(\s*ast\s*\)/i.test(subjectName);
+          const hideFourMetricRow = stemSubjectBase === 'chemistry' || stemSubjectBase === 'physics';
+
+          const stemDiscipline = resolveStemDisciplineForSub(subjectName, sub);
+          const stemDisciplineZh = stemDisplayDisciplineLabelZh(stemDiscipline);
+          const showStemDisciplineRow = stemSubjectBase === 'integrated';
           const steps = transformToMathSteps(sub, subjectName);
           const safeSteps = Array.isArray(steps) ? steps : [];
 
@@ -331,33 +343,51 @@ const AstMathAStrategy: React.FC<Props> = ({
           const processScore = val(sub.process);
           const logicScore = val(sub.logic);
           const resultScore = val(sub.result);
+          const maxPointsDisplay = (() => {
+            const m = Number(sub.max_points);
+            return Number.isFinite(m) ? m : '—';
+          })();
 
           return (
             <div key={idx} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-hidden group transition-colors">
-              <div className="flex items-center justify-between mb-8 relative z-10">
-                 <div className="flex items-center gap-4">
-                    <span className="w-12 h-12 rounded-2xl bg-[var(--bg-main)] flex items-center justify-center text-[var(--text-secondary)] font-black text-xl border border-[var(--border-color)] shadow-inner transition-colors">
+              <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between relative z-10">
+                 <div className="flex min-w-0 flex-1 items-start gap-4">
+                    <span className="w-12 h-12 shrink-0 rounded-2xl bg-[var(--bg-main)] flex items-center justify-center text-[var(--text-secondary)] font-black text-xl border border-[var(--border-color)] shadow-inner transition-colors">
                       {sub.sub_id || idx + 1}
                     </span>
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <h3 className="text-[var(--text-primary)] font-bold text-lg">
                          {isSolutionOnly ? '標準解析' : '演算流程深度評核'}
                       </h3>
+                      {showStemDisciplineRow ? (
+                        <p className="mt-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-blue-600/90 dark:text-blue-400/95">
+                          <span className="rounded-md bg-blue-500/15 px-1.5 py-0.5 text-blue-700 dark:text-blue-300">
+                            子題學門提示
+                          </span>
+                          <span className="ml-2 font-sans font-bold normal-case tracking-normal text-[var(--text-primary)]">
+                            子題「{sub.sub_id?.trim() || `第 ${idx + 1} 小題`}」屬於「{stemDisciplineZh}」
+                          </span>
+                          <span className="ml-2 font-sans font-medium normal-case tracking-normal text-[var(--text-secondary)]">
+                            （下方三向度說明隨此學門切換）
+                            {sub.sub_stem_discipline ? '' : '；未標注時由內文推估，僅供參考'}
+                          </span>
+                        </p>
+                      ) : null}
                       {!isSolutionOnly && (
                          <div className="mt-2 flex flex-wrap items-end gap-6">
-                            <div>
+                            <div className="shrink-0 min-w-[6rem]">
                               <div className="text-base font-black tracking-wider uppercase text-[var(--text-secondary)]">
                                 MAX score
                               </div>
-                              <div className="text-5xl font-black leading-none tabular-nums text-[var(--text-primary)]">
-                                {sub.max_points}
+                              <div className="text-5xl font-black leading-none tabular-nums text-[var(--text-primary)] min-h-[3rem]">
+                                {maxPointsDisplay}
                               </div>
                             </div>
-                            <div>
+                            <div className="shrink-0 min-w-[6rem]">
                               <div className="text-base font-black tracking-wider uppercase text-[var(--text-secondary)]">
                                 Actual score
                               </div>
-                              <div className="text-5xl font-black leading-none tabular-nums text-[var(--text-primary)]">
+                              <div className="text-5xl font-black leading-none tabular-nums text-[var(--text-primary)] min-h-[3rem]">
                                 {calculateStepwiseScore(safeSteps)}
                               </div>
                             </div>
@@ -366,7 +396,7 @@ const AstMathAStrategy: React.FC<Props> = ({
                     </div>
                  </div>
                  
-                 <div className="flex gap-2 flex-wrap">
+                 <div className="flex shrink-0 flex-wrap justify-start gap-2 sm:justify-end sm:max-w-[min(100%,24rem)]">
                     {Array.isArray(sub.knowledge_tags) &&
                       sub.knowledge_tags.map((tag, tIdx) => (
                       <span key={tIdx} className="px-3 py-1 bg-[var(--bg-main)] text-[var(--text-secondary)] text-[10px] font-black rounded-full border border-[var(--border-color)] uppercase tracking-wider transition-colors">
@@ -376,7 +406,7 @@ const AstMathAStrategy: React.FC<Props> = ({
                  </div>
               </div>
 
-              {!isSolutionOnly && (
+              {!isSolutionOnly && !hideFourMetricRow && (
                 <div className="mb-8 relative z-10">
                    <div className="grid grid-cols-4 gap-4 mb-6">
                       <ScoreMetric label="Setup (列式)" score={setupScore} color="text-blue-500 dark:text-blue-400" />
@@ -398,15 +428,15 @@ const AstMathAStrategy: React.FC<Props> = ({
                      <div key={sIdx} className={`p-5 rounded-2xl border flex gap-4 transition-all hover:scale-[1.01] ${colorClass}`}>
                         <div className="text-2xl pt-1 opacity-80">{icon}</div>
                         <div className="flex-grow">
-                           <div className="flex justify-between items-center mb-1">
-                              <h4 className="text-xs font-black uppercase tracking-widest opacity-70">{step.label}</h4>
+                           <div className="flex justify-between items-center gap-2 mb-1">
+                              <h4 className="text-xs font-black uppercase tracking-widest text-[var(--text-primary)]">{step.label}</h4>
                               {!isSolutionOnly && (
-                                <span className="text-[10px] font-bold opacity-60">
+                                <span className="shrink-0 text-[10px] font-bold tabular-nums text-[var(--text-secondary)]">
                                   {step.pointsAchieved} / {step.maxPoints}
                                 </span>
                               )}
                            </div>
-                           <div className="text-sm font-medium leading-relaxed opacity-90">
+                           <div className="text-sm font-medium leading-relaxed text-[var(--text-primary)]">
                              <LatexRenderer content={step.feedback || (isSolutionOnly ? "標準步驟解析" : "未偵測到此步驟")} />
                            </div>
                         </div>
@@ -467,8 +497,67 @@ const AstMathAStrategy: React.FC<Props> = ({
                   </div>
                 )}
               
-              {sub.visualization_code && (() => {
-                const vc = sub.visualization_code;
+              {(() => {
+                const rawVc = sub.visualization_code as
+                  | { explanation?: string; visualizations?: unknown[] }
+                  | null
+                  | undefined;
+                const rawItems = Array.isArray(rawVc?.visualizations) ? rawVc.visualizations : [];
+                let renderableFromModel: unknown[] = [];
+                try {
+                  renderableFromModel = filterRenderableVisualizations(rawItems);
+                } catch {
+                  renderableFromModel = [];
+                }
+                const prefetchOk =
+                  stemSubjectBase === 'math' &&
+                  prefetchedQuestionGeometry != null &&
+                  geometryJsonItemRenderable({
+                    type: 'geometry_json',
+                    code: prefetchedQuestionGeometry,
+                  });
+
+                let visualizationContent: typeof rawVc | {
+                  explanation: string;
+                  visualizations: Array<{
+                    type: 'geometry_json';
+                    title: string;
+                    code: NonNullable<typeof prefetchedQuestionGeometry>;
+                  }>;
+                } | null = null;
+
+                if (prefetchOk && renderableFromModel.length === 0) {
+                  const explanation =
+                    typeof rawVc?.explanation === 'string' && rawVc.explanation.trim()
+                      ? rawVc.explanation.trim()
+                      : '以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。';
+                  visualizationContent = {
+                    explanation,
+                    visualizations: [
+                      {
+                        type: 'geometry_json',
+                        title: '題目圖形',
+                        code: prefetchedQuestionGeometry,
+                      },
+                    ],
+                  };
+                } else if (rawVc != null && typeof rawVc === 'object') {
+                  visualizationContent = rawVc;
+                } else if (prefetchOk) {
+                  visualizationContent = {
+                    explanation: '以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。',
+                    visualizations: [
+                      {
+                        type: 'geometry_json',
+                        title: '題目圖形',
+                        code: prefetchedQuestionGeometry,
+                      },
+                    ],
+                  };
+                }
+
+                if (!visualizationContent) return null;
+                const vc: unknown = visualizationContent;
                 const chem = subjectName.includes('化學') || subjectName.includes('Chemistry');
                 const rootMol3dOk =
                   chem &&
@@ -499,14 +588,20 @@ const AstMathAStrategy: React.FC<Props> = ({
                    </div>
                  ) : (
                    <VisualizationRenderer
-                     content={sub.visualization_code}
+                     content={vc}
                      prefetchedGeometryJson={prefetchedQuestionGeometry}
                      onRetryExtraction={onRetryQuestionGeometryExtraction}
+                     allowPrefetchedGeometryFallback={stemSubjectBase === 'math'}
                    />
                  );
               })()}
 
-              {sub.correct_calculation && (
+              {zeroCompressionHasContent(sub.zero_compression) && sub.zero_compression ? (
+                <ZeroCompressionBlocks steps={sub.zero_compression} isSolutionOnly={isSolutionOnly} />
+              ) : null}
+
+              {sub.correct_calculation &&
+                (!zeroCompressionHasContent(sub.zero_compression) || isAstMathASubject) && (
                  <div className="mt-8 relative z-10 bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">
                        <span className="w-2 h-2 rounded-full bg-pink-500"></span>
@@ -517,6 +612,13 @@ const AstMathAStrategy: React.FC<Props> = ({
                     </div>
                  </div>
               )}
+
+              <CeecAnswerSheetFooter
+                spec={sub.ceec_answer_sheet ?? undefined}
+                subId={sub.sub_id}
+                exampleFormatHint={buildCeecExampleFormatHint(sub)}
+              />
+              <MicroLessonBlock lesson={sub.micro_lesson} />
             </div>
           );
         } catch (error) {

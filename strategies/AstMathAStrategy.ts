@@ -154,13 +154,13 @@ export class AstMathAStrategy implements GradingStrategy {
     # END GEOMETRIC PRECISION PROTOCOL v4
     # ════════════════════════════════════════════════════════════
 
-    # ALTERNATIVE SOLUTIONS (MANDATORY)
-    Populate "alternative_solutions" with **AT LEAST SEVEN (7)** distinct alternative solving methods.
-    **CRITICAL DETAILED REQUIREMENT FOR MULTIPLE SOLUTIONS**:
-    Each alternative solution MUST be EXTREMELY DETAILED. You must provide:
-    1. A clear Method Name (e.g., "解法一：向量內積法").
-    2. Step-by-step mathematical derivations (using $$...$$).
-    3. Thorough explanatory text in Traditional Chinese detailing "why" this method works, so students can fully understand the logic. Do NOT just give a brief summary or a single equation.
+    # ALTERNATIVE SOLUTIONS (PRIORITY AFTER CORE GRADING — ANTI-TRUNCATION)
+    **Output budget**: You MUST first fully complete, for **every** sub-question: \`feedback\`, \`correct_calculation\`, stepwise fields, and \`visualization_code\` / \`zero_compression\` when applicable. **Never** let long \`alternative_solutions\` push the JSON past the token limit — incomplete JSON breaks the UI.
+    Populate \`alternative_solutions\` with **3 to 5** distinct, high-quality methods (Traditional Chinese + $$...$$). **Do not** aim for seven if it risks truncation.
+    For each included method:
+    1. A clear method name (e.g., "解法一：向量內積法").
+    2. Step-by-step derivations with $$...$$.
+    3. Brief "why it works" prose; keep each method substantial but avoid runaway length if core fields are not yet complete.
 
     # 🎯 CRITICAL POINT ALLOCATION (配分與評分精準度 - 極度重要)
     1. **Extract Exact Points (精準抓取滿分)**: You MUST carefully read the inputted "Content" (Question OCR). Look for keywords like "占 4 分", "每題 5 分", "(8分)", or "配分: 10". 
@@ -176,6 +176,7 @@ export class AstMathAStrategy implements GradingStrategy {
     3. Phase 2 Expert Analysis: ${JSON.stringify(expert)}
 
     # OUTPUT JSON STRUCTURE (STRICT ENFORCEMENT)
+    Valid JSON only — **no \`//\` comment lines**. visualization_code is auxiliary only.
     {
       "final_score": 0,
       "max_score": 0,
@@ -185,11 +186,11 @@ export class AstMathAStrategy implements GradingStrategy {
       "stem_sub_results": [
         {
           "sub_id": "題號",
-          "max_points": 4, // 👈 必須是從題目真實抓取到的配分
-          "setup": 1.0,    // 👈 觀念/列式得分
-          "process": 2.0,  // 👈 運算過程得分
-          "result": 1.0,   // 👈 答案正確性得分
-          "logic": 0,      // 👈 邏輯附加分
+          "max_points": 4,
+          "setup": 1.0,
+          "process": 2.0,
+          "result": 1.0,
+          "logic": 0,
           "feedback": "Analysis...",
           "concept_correction": "觀念辯正...",
           "alternative_solutions": ["Method 1 Details...", "Method 2 Details..."],
@@ -199,7 +200,6 @@ export class AstMathAStrategy implements GradingStrategy {
             "explanation": "...",
             "visualizations": [ { "type": "plotly_chart", ... } ]
           }
-          // visualization_code 僅輔助圖示，不得刪減或取代上列評分欄位
         }
       ]
     }

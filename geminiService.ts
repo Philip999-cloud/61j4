@@ -59,6 +59,13 @@ const COMPOUNDS_SCHEMA_SUBJECTS = [
 /** Pro 逾時或忙碌時改走較快模型（勿與下方 Pro 模型字串相同，否則 fallback 無效） */
 const GEMINI_FLASH_FALLBACK_MODEL = 'gemini-3-flash-preview';
 
+/** 數學甲 Phase 3 含多小題長詳解、一題多解與圖示；16k 易截斷 JSON，畫面只剩前段（約「三分之一」） */
+const AST_MATH_A_PHASE3_SUBJECT_ID = 'ast-math-a';
+
+function maxOutputTokensForStemPhase3(subjectId?: string): number {
+  return subjectId === AST_MATH_A_PHASE3_SUBJECT_ID ? 65536 : 16384;
+}
+
 /**
  * 判斷是否為化學科目
  */
@@ -843,8 +850,8 @@ export async function runModeratorSynthesis(
     responseMimeType: "application/json" as const,
     systemInstruction: buildSystemInstruction(systemInstruction, subjectName),
     temperature: 0.2,
-    /** 化學／物理 compounds + stem_sub_results 體積大，預設輸出過短會截斷 JSON → Unterminated string */
-    maxOutputTokens: 16384,
+    /** 化學／物理 compounds + stem_sub_results 體積大；數學甲另見 maxOutputTokensForStemPhase3 */
+    maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
     ...(COMPOUNDS_SCHEMA_SUBJECTS.some(k => subjectName.includes(k)) && {
       responseSchema: {
         type: Type.OBJECT,
@@ -1348,7 +1355,7 @@ export async function generateReferenceSolution(
             responseMimeType: "application/json",
             systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
             temperature: 0.2,
-            maxOutputTokens: 16384,
+            maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
           }
         }, 1, 1000),
         proWaitMs
@@ -1365,7 +1372,7 @@ export async function generateReferenceSolution(
           responseMimeType: "application/json",
           systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
           temperature: 0.2,
-          maxOutputTokens: 16384,
+          maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
         }
       }, 4, 2000);
       return safeJsonParse(result.text) || {};
