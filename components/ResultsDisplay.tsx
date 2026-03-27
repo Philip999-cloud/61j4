@@ -405,33 +405,60 @@ const ResultsDisplay: React.FC<Props> = ({
     '自然科', '跨科', '自然',
     'Calculus', 'Math', 'Science', 'Integrated',
   ].some((k) => subjectName.includes(k));
+  /** 數學甲：引導區塊改由 AstMathAStrategy 頂部呈現，避免長解析後找不到 growth_roadmap */
+  const isAstMathASubject =
+    subjectName.includes('數學甲') ||
+    subjectName.includes('數甲') ||
+    /math\s*a\s*\(\s*ast\s*\)/i.test(subjectName);
 
   // #region agent log
   useEffect(() => {
     const gr = results as GradingResults;
-    const stem = gr?.phase3?.stem_sub_results;
+    const p3 = gr?.phase3;
+    const stem = p3?.stem_sub_results;
     const stemSubResultsLen = Array.isArray(stem) ? stem.length : -1;
     const stemBlockWouldRender = isStem && stemSubResultsLen > 0;
+    const growth = p3?.growth_roadmap;
+    const growthLen = Array.isArray(growth) ? growth.length : -1;
+    const sub0 = Array.isArray(stem) && stem.length > 0 ? stem[0] : null;
+    const altRaw = sub0?.alternative_solutions;
+    const altShape =
+      altRaw == null ? 'null' : Array.isArray(altRaw) ? `array:${altRaw.length}` : typeof altRaw;
+    const vc0 = sub0?.visualization_code as { visualizations?: unknown[] } | null | undefined;
+    const viz0Len = Array.isArray(vc0?.visualizations) ? vc0.visualizations.length : -1;
     fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '95c4aa' },
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9aef34' },
       body: JSON.stringify({
-        sessionId: '95c4aa',
+        sessionId: '9aef34',
         location: 'ResultsDisplay.tsx:stemGate',
-        message: 'STEM results display gate',
+        message: 'STEM AstMathA wiring snapshot',
         data: {
-          hypothesisId: 'H1',
+          hypothesisId: 'H1-H4',
           subjectName,
           isStem,
+          isAstMathASubject,
           stemSubResultsLen,
           stemBlockWouldRender,
+          growthRoadmapLen: growthLen,
+          growthPassedToStrategy: isAstMathASubject && growthLen > 0,
+          sub0AltShape: altShape,
+          sub0VizArrayLen: viz0Len,
+          hasPrefetchedGeometry: prefetchedQuestionGeometry != null,
           isSolutionOnly,
         },
         timestamp: Date.now(),
         runId: 'post-fix',
       }),
     }).catch(() => {});
-  }, [results, subjectName, isStem, isSolutionOnly]);
+  }, [
+    results,
+    subjectName,
+    isStem,
+    isAstMathASubject,
+    isSolutionOnly,
+    prefetchedQuestionGeometry,
+  ]);
   // #endregion
 
   const getRank = (score: number, max: number) => {
@@ -625,6 +652,7 @@ const ResultsDisplay: React.FC<Props> = ({
             isSolutionOnly={isSolutionOnly}
             prefetchedQuestionGeometry={prefetchedQuestionGeometry}
             onRetryQuestionGeometryExtraction={onRetryQuestionGeometryExtraction}
+            growthRoadmap={isAstMathASubject ? (phase3?.growth_roadmap ?? null) : null}
           />
           <CeecDrawingSummarySection subs={phase3.stem_sub_results} />
           
@@ -665,7 +693,10 @@ const ResultsDisplay: React.FC<Props> = ({
         </>
       ) : null}
 
-      {phase3?.growth_roadmap && Array.isArray(phase3.growth_roadmap) && phase3.growth_roadmap.length > 0 && (
+      {!isAstMathASubject &&
+        phase3?.growth_roadmap &&
+        Array.isArray(phase3.growth_roadmap) &&
+        phase3.growth_roadmap.length > 0 && (
         <div className="p-6 bg-blue-500/5 rounded-[2rem] border border-blue-500/10 shadow-2xl relative overflow-hidden">
           <div className="relative z-10 space-y-4">
             <h3 className="text-blue-500 dark:text-blue-400 font-black text-sm uppercase tracking-tighter">🚀 {isSolutionOnly ? '重點總結 (SUMMARY)' : '寫作改進建議 (IMPROVEMENT SUGGESTIONS)'}</h3>

@@ -30,6 +30,8 @@ interface Props {
   isSolutionOnly?: boolean;
   prefetchedQuestionGeometry?: GeometryJSON | null;
   onRetryQuestionGeometryExtraction?: () => void;
+  /** Phase 3 根層學習引導（與 ResultsDisplay 成長路線圖同源） */
+  growthRoadmap?: string[] | null;
 }
 
 const MathProgressBar: React.FC<{ steps: MathStep[] }> = ({ steps }) => {
@@ -232,7 +234,7 @@ const InteractiveMathText: React.FC<{
 };
 
 /** 擬真作答區：無 ceec_answer_sheet 時仍顯示格式範例（來自標準解，非批改邏輯） */
-function buildCeecExampleFormatHint(sub: StemSubScore): string {
+function buildCeecExampleFormatHint(sub: StemSubScore, fullCalcHint?: boolean): string {
   const z = sub.zero_compression;
   const parts: string[] = [];
   if (z?.answer?.trim()) {
@@ -240,12 +242,41 @@ function buildCeecExampleFormatHint(sub: StemSubScore): string {
   }
   const calc = typeof sub.correct_calculation === 'string' ? sub.correct_calculation.trim() : '';
   if (calc) {
-    const cap = 900;
+    const cap = fullCalcHint ? 50_000 : 900;
     parts.push(
       `【書寫／演算參考（請依試卷欄位調整行距）】\n${calc.length > cap ? `${calc.slice(0, cap)}…` : calc}`
     );
   }
   return parts.join('\n\n').trim();
+}
+
+/** 模型常把一題多解打成單一字串、物件或混雜型別；統一成可渲染字串陣列 */
+function normalizeAlternativeSolutions(raw: unknown): string[] {
+  if (raw == null) return [];
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t ? [t] : [];
+  }
+  if (Array.isArray(raw)) {
+    const out: string[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string' && item.trim()) {
+        out.push(item.trim());
+      } else if (item != null && typeof item === 'object' && !Array.isArray(item)) {
+        const vals = Object.values(item as Record<string, unknown>).filter(
+          (v) => typeof v === 'string' && (v as string).trim().length > 0,
+        ) as string[];
+        if (vals.length) out.push(vals.join('\n\n'));
+      }
+    }
+    return out;
+  }
+  if (typeof raw === 'object') {
+    return Object.values(raw as Record<string, unknown>)
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      .map((s) => s.trim());
+  }
+  return [];
 }
 
 const renderAlternativeSolutions = (content: any) => {
@@ -313,20 +344,45 @@ const AstMathAStrategy: React.FC<Props> = ({
   isSolutionOnly,
   prefetchedQuestionGeometry,
   onRetryQuestionGeometryExtraction,
+  growthRoadmap,
 }) => {
   const rows = Array.isArray(data) ? data : [];
+  const isAstMathA =
+    subjectName.includes('數學甲') ||
+    subjectName.includes('數甲') ||
+    /math\s*a\s*\(\s*ast\s*\)/i.test(subjectName);
+  const roadmapSteps = Array.isArray(growthRoadmap)
+    ? growthRoadmap.filter((s) => typeof s === 'string' && s.trim().length > 0)
+    : [];
+
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-8 duration-700">
+      {isAstMathA && roadmapSteps.length > 0 && (
+        <div className="p-6 bg-blue-500/5 rounded-[2rem] border border-blue-500/10 shadow-xl relative z-10">
+          <h3 className="text-blue-600 dark:text-blue-400 font-black text-sm uppercase tracking-tighter mb-4 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            {isSolutionOnly ? '重點總結與引導' : '學習引導與後續精進'}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {roadmapSteps.map((step, i) => (
+              <div key={i} className="flex gap-2 items-start rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)]/60 p-3">
+                <span className="shrink-0 w-6 h-6 bg-blue-600 text-white rounded-lg flex items-center justify-center font-black text-[10px]">
+                  {i + 1}
+                </span>
+                <div className="text-[var(--text-primary)] text-sm font-medium leading-relaxed min-w-0 break-words">
+                  <LatexRenderer content={step} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {rows.map((sub, idx) => {
         if (!sub) return null;
         try {
           /** 分科物理／化學：科目名稱與下方三向度同源，避免重複四格＋進度條；以 resolve 為準（含英文 Chemistry／Physics） */
           const stemSubjectBase = resolveStemDisciplineFromSubject(subjectName);
-          /** 與 StrategyFactory 數學甲路由一致：五段式與長篇參考詳解並存僅限 AST 數學甲 */
-          const isAstMathASubject =
-            subjectName.includes('數學甲') ||
-            subjectName.includes('數甲') ||
-            /math\s*a\s*\(\s*ast\s*\)/i.test(subjectName);
           const hideFourMetricRow = stemSubjectBase === 'chemistry' || stemSubjectBase === 'physics';
 
           const stemDiscipline = resolveStemDisciplineForSub(subjectName, sub);
@@ -349,7 +405,7 @@ const AstMathAStrategy: React.FC<Props> = ({
           })();
 
           return (
-            <div key={idx} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-hidden group transition-colors">
+            <div key={idx} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
               <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between relative z-10">
                  <div className="flex min-w-0 flex-1 items-start gap-4">
                     <span className="w-12 h-12 shrink-0 rounded-2xl bg-[var(--bg-main)] flex items-center justify-center text-[var(--text-secondary)] font-black text-xl border border-[var(--border-color)] shadow-inner transition-colors">
@@ -468,20 +524,50 @@ const AstMathAStrategy: React.FC<Props> = ({
                           </div>
                       </div>
                     )}
-                    
-                    {sub.alternative_solutions && (
-                       <div className="p-6 bg-emerald-500/5 rounded-[2rem] border border-emerald-500/20">
-                          <h5 className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            一題多解 (Alternative Approach)
-                          </h5>
-                          <div className="text-[var(--text-primary)] text-sm leading-relaxed">
-                             {renderAlternativeSolutions(sub.alternative_solutions)}
-                          </div>
-                       </div>
-                    )}
                  </div>
               </div>
+
+              {(() => {
+                const altList = normalizeAlternativeSolutions(sub.alternative_solutions);
+                // #region agent log
+                if (idx === 0) {
+                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9aef34' },
+                    body: JSON.stringify({
+                      sessionId: '9aef34',
+                      location: 'AstMathAStrategy.tsx:altSolutions',
+                      message: 'sub0 alternative_solutions normalized',
+                      data: {
+                        hypothesisId: 'H2',
+                        rawType:
+                          sub.alternative_solutions == null
+                            ? 'null'
+                            : Array.isArray(sub.alternative_solutions)
+                              ? 'array'
+                              : typeof sub.alternative_solutions,
+                        normalizedCount: altList.length,
+                        isAstMathA,
+                      },
+                      timestamp: Date.now(),
+                      runId: 'post-fix',
+                    }),
+                  }).catch(() => {});
+                }
+                // #endregion
+                if (altList.length === 0) return null;
+                return (
+                  <div className="mt-8 p-6 bg-emerald-500/5 rounded-[2rem] border border-emerald-500/20 relative z-10 w-full min-w-0">
+                    <h5 className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      一題多解 (Alternative Approach)
+                    </h5>
+                    <div className="text-[var(--text-primary)] text-sm leading-relaxed min-w-0">
+                      {renderAlternativeSolutions(altList)}
+                    </div>
+                  </div>
+                );
+              })()}
               
               {!isSolutionOnly &&
                 ((Array.isArray(sub.student_input_parsing?.segments) &&
@@ -542,7 +628,36 @@ const AstMathAStrategy: React.FC<Props> = ({
                     ],
                   };
                 } else if (rawVc != null && typeof rawVc === 'object') {
-                  visualizationContent = rawVc;
+                  const hasModelGeometry = renderableFromModel.some(
+                    (it) => (it as { type?: string }).type === 'geometry_json',
+                  );
+                  if (
+                    prefetchOk &&
+                    stemSubjectBase === 'math' &&
+                    renderableFromModel.length > 0 &&
+                    !hasModelGeometry
+                  ) {
+                    const exModel =
+                      typeof rawVc.explanation === 'string' ? rawVc.explanation.trim() : '';
+                    visualizationContent = {
+                      explanation: [
+                        exModel,
+                        '【題目圖形】以下為依題幹影像預先萃取之示意圖，與解題用圖表併列對照。',
+                      ]
+                        .filter(Boolean)
+                        .join('\n'),
+                      visualizations: [
+                        {
+                          type: 'geometry_json',
+                          title: '題目圖形',
+                          code: prefetchedQuestionGeometry!,
+                        },
+                        ...rawItems,
+                      ],
+                    };
+                  } else {
+                    visualizationContent = rawVc;
+                  }
                 } else if (prefetchOk) {
                   visualizationContent = {
                     explanation: '以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。',
@@ -557,6 +672,46 @@ const AstMathAStrategy: React.FC<Props> = ({
                 }
 
                 if (!visualizationContent) return null;
+                // #region agent log
+                if (idx === 0) {
+                  const hasGeo = renderableFromModel.some(
+                    (it) => (it as { type?: string }).type === 'geometry_json',
+                  );
+                  let vizBranch = 'other';
+                  if (prefetchOk && renderableFromModel.length === 0) {
+                    vizBranch = 'prefetch_only_empty_model';
+                  } else if (rawVc != null && typeof rawVc === 'object') {
+                    if (prefetchOk && stemSubjectBase === 'math' && renderableFromModel.length > 0 && !hasGeo) {
+                      vizBranch = 'prepend_question_geometry';
+                    } else {
+                      vizBranch = 'raw_vc';
+                    }
+                  } else if (prefetchOk) {
+                    vizBranch = 'prefetch_only_no_raw_object';
+                  }
+                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9aef34' },
+                    body: JSON.stringify({
+                      sessionId: '9aef34',
+                      location: 'AstMathAStrategy.tsx:vizMerge',
+                      message: 'sub0 visualization merge',
+                      data: {
+                        hypothesisId: 'H3',
+                        stemSubjectBase,
+                        prefetchOk,
+                        rawVizLen: rawItems.length,
+                        renderableFromModelLen: renderableFromModel.length,
+                        hasModelGeometryJson: hasGeo,
+                        vizBranch,
+                        isAstMathA,
+                      },
+                      timestamp: Date.now(),
+                      runId: 'post-fix',
+                    }),
+                  }).catch(() => {});
+                }
+                // #endregion
                 const vc: unknown = visualizationContent;
                 const chem = subjectName.includes('化學') || subjectName.includes('Chemistry');
                 const rootMol3dOk =
@@ -601,7 +756,7 @@ const AstMathAStrategy: React.FC<Props> = ({
               ) : null}
 
               {sub.correct_calculation &&
-                (!zeroCompressionHasContent(sub.zero_compression) || isAstMathASubject) && (
+                (!zeroCompressionHasContent(sub.zero_compression) || isAstMathA) && (
                  <div className="mt-8 relative z-10 bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">
                        <span className="w-2 h-2 rounded-full bg-pink-500"></span>
@@ -616,7 +771,7 @@ const AstMathAStrategy: React.FC<Props> = ({
               <CeecAnswerSheetFooter
                 spec={sub.ceec_answer_sheet ?? undefined}
                 subId={sub.sub_id}
-                exampleFormatHint={buildCeecExampleFormatHint(sub)}
+                exampleFormatHint={buildCeecExampleFormatHint(sub, isAstMathA)}
               />
               <MicroLessonBlock lesson={sub.micro_lesson} />
             </div>
