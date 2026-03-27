@@ -40,7 +40,26 @@ const PLOTLY_TRACE_TYPES = new Set([
   'sankey',
 ]);
 
-function plotlyDataLooksRenderable(data: unknown): boolean {
+/** 單一 Plotly trace 物件（非包在陣列裡）是否像有可繪資料 */
+function singlePlotlyTraceLooksRenderable(o: Record<string, unknown>): boolean {
+  const t = o.type;
+  if (typeof t !== 'string' || !PLOTLY_TRACE_TYPES.has(t)) return false;
+  if (t === 'surface' && o.z != null) return true;
+  if (t === 'mesh3d') {
+    const xs = o.x;
+    if (Array.isArray(xs) && xs.length > 0) return true;
+    if (o.i != null && o.j != null && o.k != null) return true;
+    if (o.alphahull != null) return true;
+    return false;
+  }
+  if (t === 'scatter3d') {
+    return o.x != null || o.y != null || o.z != null;
+  }
+  if (o.x != null && o.y != null) return true;
+  return false;
+}
+
+export function plotlyDataLooksRenderable(data: unknown): boolean {
   if (data == null) return false;
   if (Array.isArray(data) && data.length > 0) return true;
   if (typeof data === 'object' && !Array.isArray(data)) {
@@ -48,11 +67,23 @@ function plotlyDataLooksRenderable(data: unknown): boolean {
     if (Array.isArray(o.data) && o.data.length > 0) return true;
     if (Array.isArray(o.traces) && o.traces.length > 0) return true;
     if (o.x != null && o.y != null) return true;
+    if (singlePlotlyTraceLooksRenderable(o)) return true;
+    // 與 VisualizationRenderer.normalizePlotlyData 一致：模型常把 traces 放在 data: { data: [...] }
+    const inner = o.data;
+    if (
+      inner != null &&
+      typeof inner === 'object' &&
+      !Array.isArray(inner) &&
+      Array.isArray((inner as Record<string, unknown>).data) &&
+      (inner as { data: unknown[] }).data.length > 0
+    ) {
+      return true;
+    }
   }
   return false;
 }
 
-function geometryJsonItemRenderable(item: { type?: string; code?: unknown }): boolean {
+export function geometryJsonItemRenderable(item: { type?: string; code?: unknown }): boolean {
   if (item.type !== 'geometry_json') return false;
   const c = item.code;
   if (typeof c === 'string' && c.trim().length > 0) return true;
@@ -101,10 +132,39 @@ export function validateVisualizationItem(item: unknown): VizValidationResult {
         (typeof v.code === 'string' && v.code.trim());
       return s ? { valid: true } : { valid: false, reason: 'svg_empty' };
     }
-    case 'plotly_chart':
-      return plotlyDataLooksRenderable(v.data)
-        ? { valid: true }
-        : { valid: false, reason: 'plotly_no_data' };
+    case 'plotly_chart': {
+      const d = v.data;
+      const ok = plotlyDataLooksRenderable(d);
+      if (!ok && typeof fetch !== 'undefined') {
+        // #region agent log
+        fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
+          body: JSON.stringify({
+            sessionId: '875c85',
+            runId: 'post-fix',
+            hypothesisId: 'H3',
+            location: 'validateStemVisualization.ts:plotly_chart',
+            message: 'plotly_no_data shape',
+            data: {
+              dataIsArray: Array.isArray(d),
+              arrLen: Array.isArray(d) ? d.length : null,
+              nestedLen:
+                d && typeof d === 'object' && !Array.isArray(d) && Array.isArray((d as Record<string, unknown>).data)
+                  ? (d as { data: unknown[] }).data.length
+                  : null,
+              hasTraceXY:
+                d && typeof d === 'object' && !Array.isArray(d)
+                  ? (d as Record<string, unknown>).x != null && (d as Record<string, unknown>).y != null
+                  : false,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+      }
+      return ok ? { valid: true } : { valid: false, reason: 'plotly_no_data' };
+    }
     case 'recharts_plot':
       return Array.isArray(v.data) && v.data.length > 0
         ? { valid: true }

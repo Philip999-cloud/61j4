@@ -212,9 +212,14 @@ export class PhysicsStrategy implements GradingStrategy {
     # OUTPUT JSON STRUCTURE (STRICT ENFORCEMENT)
     CRITICAL: The JSON output below MUST NOT contain any // comments, trailing commas, or markdown code block formatting (like \`\`\`json). Output ONLY the raw JSON string.
 
+    # ⚠️ 配分與視覺化（勿照抄示範數字與空圖）
+    - **禁止**將 \`final_score\`、\`max_score\`、各子題的 \`setup\`/\`process\`/\`result\`/\`logic\` **全部填 0** 卻在 \`feedback\` 寫滿分或高度肯定；分數必須與評語一致。
+    - \`setup + process + result + logic\` 須等於該子題學生**實得**分，且 ≤ \`max_points\`；\`final_score\`／\`max_score\` 須與全卷各子題加總一致。
+    - 若使用 \`plotly_chart\`，\`data\` 必須為**非空**的 traces 陣列（含有效座標）；**嚴禁**僅輸出 \`"data": []\`。不適用 3D 圖時請改 \`svg_diagram\` 並給完整 \`svgCode\`（或 \`physics_wave_interference\`／\`physics_snell_diagram\` 等已定義類型），勿留空壳。
+
     {
-      "final_score": 0,
-      "max_score": 0,
+      "final_score": 4,
+      "max_score": 4,
       "remarks_zh": "整體試卷的主席綜整評語。",
       "growth_roadmap": ["建議..."],
       "detailed_fixes": [],
@@ -244,8 +249,8 @@ export class PhysicsStrategy implements GradingStrategy {
                {
                  "type": "plotly_chart",
                  "title": "3D Physics Diagram",
-                 "data": [],
-                 "layout": {}
+                 "data": [{ "type": "scatter3d", "mode": "markers", "x": [0], "y": [0], "z": [0] }],
+                 "layout": { "scene": { "aspectmode": "cube" } }
                }
              ]
           },

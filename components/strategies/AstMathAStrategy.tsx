@@ -520,8 +520,23 @@ const AstMathAStrategy: React.FC<Props> = ({
                   </div>
                 )}
               
-              {sub.visualization_code && (() => {
-                const vc = sub.visualization_code;
+              {(() => {
+                const visualizationContent =
+                  sub.visualization_code ??
+                  (stemSubjectBase === 'math' && prefetchedQuestionGeometry
+                    ? {
+                        explanation: '以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。',
+                        visualizations: [
+                          {
+                            type: 'geometry_json' as const,
+                            title: '題目圖形',
+                            code: prefetchedQuestionGeometry,
+                          },
+                        ],
+                      }
+                    : null);
+                if (!visualizationContent) return null;
+                const vc = visualizationContent;
                 const chem = subjectName.includes('化學') || subjectName.includes('Chemistry');
                 const rootMol3dOk =
                   chem &&
@@ -552,9 +567,10 @@ const AstMathAStrategy: React.FC<Props> = ({
                    </div>
                  ) : (
                    <VisualizationRenderer
-                     content={sub.visualization_code}
+                     content={vc}
                      prefetchedGeometryJson={prefetchedQuestionGeometry}
                      onRetryExtraction={onRetryQuestionGeometryExtraction}
+                     allowPrefetchedGeometryFallback={stemSubjectBase === 'math'}
                    />
                  );
               })()}

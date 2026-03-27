@@ -62,7 +62,11 @@ import {
   parseEnergyLevelDiagram,
   parsePeriodicTableHighlight,
 } from '../utils/phase3VizPayload';
-import { filterRenderableVisualizations } from '../utils/validateStemVisualization';
+import {
+  filterRenderableVisualizations,
+  geometryJsonItemRenderable,
+  plotlyDataLooksRenderable,
+} from '../utils/validateStemVisualization';
 
 function isChemStoichiometryBlock(text: string): boolean {
   if (!text) return false;
@@ -266,10 +270,19 @@ function shouldStrictInterceptGeometryViz(
   return typeof onRetryExtraction === 'function' || visualizationPayloadHasGeometryJson(payload);
 }
 
+type VizPrefetchGateOpts = {
+  allowPrefetchedGeometryFallback?: boolean;
+  prefetchedGeometryJson?: GeometryJSON | null;
+};
+
 /**
  * [VizRenderer] 傳入 content 防呆：空值、空物件、無 visualizations（且無其他可渲染根層欄位）→ 不掛載區塊
  */
-function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]): boolean {
+function isVizRendererContentRenderable(
+  content: any,
+  compoundsProp?: Compound[],
+  prefetchOpts?: VizPrefetchGateOpts,
+): boolean {
   if (content == null) return false;
   if (typeof content === 'string') {
     return content.trim().length > 0;
@@ -289,6 +302,9 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
       }
       if (item.type === 'geometry_json') {
         return isGeometryJsonVizRenderable(item);
+      }
+      if (item.type === 'plotly_chart') {
+        return plotlyDataLooksRenderable(item.data);
       }
       if (item.type === 'python_script') {
         return typeof item.code === 'string' && item.code.trim().length > 0;
@@ -343,6 +359,9 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
   if (content.cid != null && String(content.cid).trim() !== '') return true;
   if (typeof content.smiles === 'string' && content.smiles.trim()) return true;
   if (content.chartType) return true;
+  if (content.type === 'plotly_chart') {
+    return plotlyDataLooksRenderable(content.data);
+  }
   const t = content.type;
   if (typeof t === 'string' && (PLOTLY_TRACE_TYPES.has(t) || ROOT_VIZ_TYPES.has(t))) return true;
 
@@ -404,6 +423,20 @@ function isVizRendererContentRenderable(content: any, compoundsProp?: Compound[]
     if (typeof ms === 'string' && ms.trim()) return true;
   }
 
+  if (typeof content.explanation === 'string' && content.explanation.trim().length > 0) {
+    return true;
+  }
+  if (
+    prefetchOpts?.allowPrefetchedGeometryFallback &&
+    prefetchOpts.prefetchedGeometryJson != null &&
+    geometryJsonItemRenderable({
+      type: 'geometry_json',
+      code: prefetchOpts.prefetchedGeometryJson,
+    })
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -421,6 +454,9 @@ function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, comp
       }
       if (item.type === 'geometry_json') {
         return isGeometryJsonVizRenderable(item);
+      }
+      if (item.type === 'plotly_chart') {
+        return plotlyDataLooksRenderable(item.data);
       }
       if (item.type === 'python_script') {
         return typeof item.code === 'string' && item.code.trim().length > 0;
@@ -483,10 +519,25 @@ function mol3dVizHasLoadableStructure(viz: VisualizationItem | null | undefined)
   return false;
 }
 
-function isParsedPayloadDisplayable(data: VisualizationPayload | null, compoundsProp?: Compound[]): boolean {
+function isParsedPayloadDisplayable(
+  data: VisualizationPayload | null,
+  compoundsProp?: Compound[],
+  prefetchOpts?: VizPrefetchGateOpts,
+): boolean {
   if (!data) return false;
   if (isParsedVisualizationPayloadRenderable(data, compoundsProp)) return true;
-  return typeof data.explanation === 'string' && data.explanation.trim().length > 0;
+  if (typeof data.explanation === 'string' && data.explanation.trim().length > 0) return true;
+  if (
+    prefetchOpts?.allowPrefetchedGeometryFallback &&
+    prefetchOpts.prefetchedGeometryJson != null &&
+    geometryJsonItemRenderable({
+      type: 'geometry_json',
+      code: prefetchOpts.prefetchedGeometryJson,
+    })
+  ) {
+    return true;
+  }
+  return false;
 }
 
 // -------------------------------------------------------------------
@@ -509,8 +560,69 @@ const normalizePlotlyData = (raw: any): any[] | null => {
   }
   if (typeof raw === 'object' && Array.isArray(raw.traces) && raw.traces.length > 0) return raw.traces;
   if (typeof raw === 'object' && raw.x != null && raw.y != null) return [raw];
+  // 單一 trace：surface 可僅有 z；mesh3d 可僅有頂點或 i,j,k
+  if (
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    typeof raw.type === 'string' &&
+    PLOTLY_TRACE_TYPES.has(raw.type)
+  ) {
+    if (raw.type === 'surface' && raw.z != null) return [raw];
+    if (raw.type === 'mesh3d') {
+      if (Array.isArray(raw.x) && raw.x.length > 0) return [raw];
+      if (raw.i != null && raw.j != null && raw.k != null) return [raw];
+    }
+    if (
+      raw.type === 'scatter3d' &&
+      (raw.x != null || raw.y != null || raw.z != null)
+    ) {
+      return [raw];
+    }
+  }
   return null;
 };
+
+/** 解開 visualizations[] 內 plotly_chart.data 的雙層包裝或單一 trace 誤放在 data */
+function unwrapPlotlyChartVisualizationItem(viz: any): any {
+  if (!viz || viz.type !== 'plotly_chart') return viz;
+  const raw = viz.data;
+  if (raw == null) return viz;
+  if (Array.isArray(raw) && raw.length > 0) return viz;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return viz;
+  const o = raw as Record<string, unknown>;
+  if (Array.isArray(o.data) && o.data.length > 0) {
+    return { ...viz, data: o.data, layout: viz.layout ?? o.layout };
+  }
+  if (Array.isArray(o.traces) && o.traces.length > 0) {
+    return { ...viz, data: o.traces, layout: viz.layout ?? o.layout };
+  }
+  const t = o.type;
+  if (typeof t === 'string' && PLOTLY_TRACE_TYPES.has(t)) {
+    const singleOk =
+      (t === 'surface' && o.z != null) ||
+      (t === 'mesh3d' &&
+        ((Array.isArray(o.x) && (o.x as unknown[]).length > 0) ||
+          (o.i != null && o.j != null && o.k != null))) ||
+      (t === 'scatter3d' && (o.x != null || o.y != null || o.z != null)) ||
+      (o.x != null && o.y != null);
+    if (singleOk) {
+      return { ...viz, data: [raw], layout: viz.layout ?? (raw as { layout?: unknown }).layout };
+    }
+  }
+  return viz;
+}
+
+function traceIsPlotly3D(t: any): boolean {
+  const ty = String(t?.type || '');
+  return (
+    ty === 'mesh3d' ||
+    ty === 'scatter3d' ||
+    ty === 'surface' ||
+    ty === 'volume' ||
+    ty === 'cone' ||
+    ty === 'isosurface'
+  );
+}
 
 /** scatter3d 缺 z／長度不符／無任何有限點時 Plotly WebGL 易失敗，繪製前剔除 */
 function filterBrokenScatter3dTraces(traces: any[]): { traces: any[]; droppedBadScatter3d: boolean } {
@@ -588,6 +700,9 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       return v;
     };
     const traces = patchPhysics3dTraces(patchStem3dPlotlyTraces(rawTraces, vizOpts), vizOpts);
+    const coerceNumArr = (a: any): any =>
+      Array.isArray(a) ? a.map((v: any) => coercePlotlyNum(v)) : a;
+
     const tracesCoerced = traces.map((t: any) => {
       if (t?.type === 'scatter' && Array.isArray(t.x) && Array.isArray(t.y)) {
         return { ...t, x: t.x.map(coercePlotlyNum), y: t.y.map(coercePlotlyNum) };
@@ -598,6 +713,34 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
           x: t.x.map(coercePlotlyNum),
           y: t.y.map(coercePlotlyNum),
           z: t.z.map(coercePlotlyNum),
+        };
+      }
+      if (t?.type === 'mesh3d') {
+        const ijkm = (a: any) =>
+          Array.isArray(a) ? a.map((v: any) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v)) : a;
+        return {
+          ...t,
+          x: coerceNumArr(t.x),
+          y: coerceNumArr(t.y),
+          z: coerceNumArr(t.z),
+          ...(Array.isArray(t.i) ? { i: ijkm(t.i) } : {}),
+          ...(Array.isArray(t.j) ? { j: ijkm(t.j) } : {}),
+          ...(Array.isArray(t.k) ? { k: ijkm(t.k) } : {}),
+        };
+      }
+      if (t?.type === 'surface') {
+        const z = t.z;
+        let zCoerced = z;
+        if (Array.isArray(z) && z.length > 0 && Array.isArray(z[0])) {
+          zCoerced = z.map((row: any) => (Array.isArray(row) ? row.map(coercePlotlyNum) : coercePlotlyNum(row)));
+        } else if (Array.isArray(z)) {
+          zCoerced = z.map(coercePlotlyNum);
+        }
+        return {
+          ...t,
+          x: Array.isArray(t.x) ? coerceNumArr(t.x) : t.x,
+          y: Array.isArray(t.y) ? coerceNumArr(t.y) : t.y,
+          z: zCoerced,
         };
       }
       return t;
@@ -789,9 +932,47 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
     };
 
     const mergedLayout = { ...defaultLayout, ...layout };
-    
+
+    const allTraces3D =
+      tracesForPlot.length > 0 && tracesForPlot.every((t: any) => traceIsPlotly3D(t));
+    if (allTraces3D) {
+      delete (mergedLayout as any).xaxis;
+      delete (mergedLayout as any).yaxis;
+      const existingScene =
+        layout?.scene != null && typeof layout.scene === 'object' && !Array.isArray(layout.scene)
+          ? layout.scene
+          : {};
+      const sceneBase = {
+        xaxis: {
+          title: 'x',
+          showgrid: true,
+          zerolinecolor: '#ef4444',
+          gridcolor: gridColor,
+          backgroundcolor: 'rgba(0,0,0,0)',
+        },
+        yaxis: {
+          title: 'y',
+          showgrid: true,
+          zerolinecolor: '#22c55e',
+          gridcolor: gridColor,
+          backgroundcolor: 'rgba(0,0,0,0)',
+        },
+        zaxis: {
+          title: 'z',
+          showgrid: true,
+          zerolinecolor: '#3b82f6',
+          gridcolor: gridColor,
+          backgroundcolor: 'rgba(0,0,0,0)',
+        },
+        aspectmode: 'cube',
+        camera: { projection: { type: 'orthographic' }, eye: { x: 1.45, y: 1.45, z: 1.25 } },
+        bgcolor: 'rgba(0,0,0,0)',
+      };
+      (mergedLayout as any).scene = { ...sceneBase, ...existingScene };
+    }
+
     // 保留 AI 若有設定特定的 Scale Anchor (例如 1:1 幾何比例)
-    if (layout?.xaxis?.scaleanchor) {
+    if (!allTraces3D && layout?.xaxis?.scaleanchor) {
         mergedLayout.xaxis = { ...mergedLayout.xaxis, ...layout.xaxis };
     }
 
@@ -1033,19 +1214,51 @@ export const VisualizationRenderer: React.FC<{
   prefetchedGeometryJson?: GeometryJSON | null;
   /** 與幾何預抓並用：嚴格模式下攔截 python_script 等並供使用者觸發重新萃取 */
   onRetryExtraction?: () => void;
-}> = ({ content, compounds: compoundsProp, prefetchedGeometryJson, onRetryExtraction }) => {
+  /**
+   * 數學門專用：模型 visualizations 全數被過濾掉時，仍可用 prefetchedGeometryJson 畫題目圖。
+   */
+  allowPrefetchedGeometryFallback?: boolean;
+}> = ({
+  content,
+  compounds: compoundsProp,
+  prefetchedGeometryJson,
+  onRetryExtraction,
+  allowPrefetchedGeometryFallback = false,
+}) => {
   const [parsedData, setParsedData] = useState<VisualizationPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const vizPayload = parsedData;
 
-  const displayVisualizations = useMemo(
-    () => filterRenderableVisualizations(vizPayload?.visualizations),
-    [vizPayload?.visualizations],
+  const prefetchGateOpts = useMemo(
+    () => ({
+      allowPrefetchedGeometryFallback: !!allowPrefetchedGeometryFallback,
+      prefetchedGeometryJson,
+    }),
+    [allowPrefetchedGeometryFallback, prefetchedGeometryJson],
   );
 
+  const displayVisualizations = useMemo((): VisualizationItem[] => {
+    const base = filterRenderableVisualizations(vizPayload?.visualizations) as VisualizationItem[];
+    if (base.length > 0) return base;
+    if (
+      allowPrefetchedGeometryFallback &&
+      prefetchedGeometryJson != null &&
+      geometryJsonItemRenderable({ type: 'geometry_json', code: prefetchedGeometryJson })
+    ) {
+      return [
+        {
+          type: 'geometry_json',
+          title: '題目圖形',
+          code: prefetchedGeometryJson as unknown as string,
+        } as VisualizationItem,
+      ];
+    }
+    return base;
+  }, [vizPayload?.visualizations, allowPrefetchedGeometryFallback, prefetchedGeometryJson]);
+
   useEffect(() => {
-    if (!isVizRendererContentRenderable(content, compoundsProp)) {
+    if (!isVizRendererContentRenderable(content, compoundsProp, prefetchGateOpts)) {
       setParsedData(null);
       setError(null);
       return;
@@ -1160,7 +1373,8 @@ export const VisualizationRenderer: React.FC<{
 
        // ✅ Fix: visualization_code 裡的 visualizations 陣列中的 trace 也要處理
        if (parsed.visualizations && Array.isArray(parsed.visualizations)) {
-         parsed.visualizations = parsed.visualizations.map((viz: any) => {
+         parsed.visualizations = parsed.visualizations.map((vizIn: any) => {
+           const viz = unwrapPlotlyChartVisualizationItem(vizIn);
            if (
              viz.type === 'chem_aromatic_ring' ||
              viz.type === 'physics_wave_interference' ||
@@ -1325,9 +1539,9 @@ export const VisualizationRenderer: React.FC<{
            setParsedData(parsed);
        }
     }
-  }, [content, compoundsProp]);
+  }, [content, compoundsProp, prefetchGateOpts]);
 
-  if (!isVizRendererContentRenderable(content, compoundsProp)) {
+  if (!isVizRendererContentRenderable(content, compoundsProp, prefetchGateOpts)) {
     return null;
   }
 
@@ -1342,7 +1556,7 @@ export const VisualizationRenderer: React.FC<{
   
   if (!parsedData || !vizPayload) return null;
 
-  if (!isParsedPayloadDisplayable(vizPayload, compoundsProp)) {
+  if (!isParsedPayloadDisplayable(vizPayload, compoundsProp, prefetchGateOpts)) {
     return null;
   }
 

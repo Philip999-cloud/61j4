@@ -127,13 +127,95 @@ export const calculateStepwiseScore = (steps: MathStep[]): number => {
 const safeParse = (val: any): number => {
   if (typeof val === 'number' && !isNaN(val)) return val;
   if (typeof val === 'string') {
-    const match = val.match(/[0-9]+(\.[0-9]+)?/);
+    const asciiDigits = val.replace(/[\uFF10-\uFF19]/g, (ch) =>
+      String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
+    );
+    const match = asciiDigits.match(/[0-9]+(\.[0-9]+)?/);
     if (match) {
-        return parseFloat(match[0]);
+      return parseFloat(match[0]);
     }
   }
   return 0;
 };
+
+/**
+ * 與 transformToMathSteps 一致：由該子題滿分推算三向度桶上限（單一來源，避免回填與 UI 不一致）。
+ */
+export function getStemSubBucketMaxes(maxPoints: unknown): {
+  declaredMax: number;
+  setupMax: number;
+  processMax: number;
+  resultMax: number;
+} {
+  const declaredMax =
+    maxPoints && typeof maxPoints === 'number' && maxPoints > 0 ? maxPoints : 5;
+  let setupMax = 0,
+    resultMax = 0,
+    processMax = 0;
+
+  if (declaredMax <= 4) {
+    const idealSetup = declaredMax * 0.25;
+    const idealResult = declaredMax * 0.25;
+    setupMax = Math.round(idealSetup * 2) / 2;
+    resultMax = Math.round(idealResult * 2) / 2;
+    if (declaredMax >= 1) {
+      if (setupMax < 0.5) setupMax = 0.5;
+      if (resultMax < 0.5) resultMax = 0.5;
+    }
+    processMax = declaredMax - setupMax - resultMax;
+    if (processMax <= 0 && declaredMax > 1) {
+      if (resultMax >= 0.5) {
+        resultMax -= 0.5;
+        processMax += 0.5;
+      } else if (setupMax >= 0.5) {
+        setupMax -= 0.5;
+        processMax += 0.5;
+      }
+    }
+    processMax = Math.round(processMax * 2) / 2;
+  } else {
+    setupMax = Math.max(1, Math.round(declaredMax * 0.25));
+    resultMax = Math.max(1, Math.round(declaredMax * 0.15));
+    processMax = declaredMax - setupMax - resultMax;
+  }
+
+  return { declaredMax, setupMax, processMax, resultMax };
+}
+
+/**
+ * 將子題實得分拆入 setup/process/result（logic=0），加總貼近 earned 且不超過各桶上限。
+ * 供 Phase3 JSON 漏掉四分項時，依 final_score 與 max_points 回填。
+ */
+export function allocateStemSubQuartetFromEarned(
+  earned: number,
+  maxPoints: unknown,
+): { setup: number; process: number; result: number; logic: number } {
+  const { declaredMax, setupMax, processMax, resultMax } = getStemSubBucketMaxes(maxPoints);
+  const E = Math.max(0, Math.min(Number(earned) || 0, declaredMax));
+  const capSum = setupMax + processMax + resultMax;
+  if (capSum <= 0 || E === 0) return { setup: 0, process: 0, result: 0, logic: 0 };
+
+  const round05 = (x: number) => Math.round(Math.max(0, x) * 2) / 2;
+  let setup = round05((E * setupMax) / capSum);
+  setup = Math.min(setup, setupMax);
+  let result = round05((E * resultMax) / capSum);
+  result = Math.min(result, resultMax);
+  let process = round05(E - setup - result);
+  process = Math.min(process, processMax);
+
+  let diff = E - setup - process - result;
+  if (diff > 0.001) {
+    const addP = Math.min(processMax - process, diff);
+    process += addP;
+    diff -= addP;
+    const addS = Math.min(setupMax - setup, diff);
+    setup += addS;
+    diff -= addS;
+    result = Math.min(resultMax, result + diff);
+  }
+
+  return { setup, process, result, logic: 0 };
+}
 
 /**
  * Transforms the raw Gemini STEM results into Process-Oriented Stepwise structure.
@@ -149,53 +231,34 @@ export const transformToMathSteps = (subResult: StemSubScore, subjectName: strin
   const rawSetup = safeParse(subResult.setup) || safeParse((subResult as any).conceptual_modeling);
   const rawProcess = (safeParse(subResult.process) || safeParse((subResult as any).core_computation)) + safeParse(subResult.logic);
   const rawResult = safeParse(subResult.result) || safeParse((subResult as any).logical_integration);
-  
-  // 1. Determine Total Max based strictly on AI's extracted max_points (or default)
-  // We generally trust the integer provided, but it might be a float in rare cases.
-  let declaredMax = (subResult.max_points && typeof subResult.max_points === 'number' && subResult.max_points > 0) ? subResult.max_points : 5;
-  
-  // 2. Calculate Base Distribution (Buckets)
-  let setupMax = 0, resultMax = 0, processMax = 0;
-  
-  if (declaredMax <= 4) {
-     // Small Point Distribution (e.g., 2, 3, 4 points)
-     // Enable 0.5 granularity logic
-     // Target Ratio: ~25% Setup, ~50% Process, ~25% Result
-     
-     // 1. Calculate ideal values
-     const idealSetup = declaredMax * 0.25;
-     const idealResult = declaredMax * 0.25;
-     
-     // 2. Round to nearest 0.5
-     setupMax = Math.round(idealSetup * 2) / 2;
-     resultMax = Math.round(idealResult * 2) / 2;
-     
-     // 3. Ensure minimum allocation (at least 0.5 if total allows) unless total is very small
-     if (declaredMax >= 1) {
-         if (setupMax < 0.5) setupMax = 0.5;
-         if (resultMax < 0.5) resultMax = 0.5;
-     }
 
-     // 4. Assign remainder to Process
-     processMax = declaredMax - setupMax - resultMax;
-     
-     // 5. Sanity check: if processMax is negative or 0 due to rounding on very small numbers (e.g. 1pt), adjust.
-     if (processMax <= 0 && declaredMax > 1) {
-         // Steal from result or setup
-         if (resultMax >= 0.5) { resultMax -= 0.5; processMax += 0.5; }
-         else if (setupMax >= 0.5) { setupMax -= 0.5; processMax += 0.5; }
-     }
-     
-     // Precision fix
-     processMax = Math.round(processMax * 2) / 2;
-
-  } else {
-     // Standard Distribution (Approx CEEC Standard: 25% Concept, 60% Process, 15% Result)
-     // Use Math.round for integers to keep UI clean for larger numbers
-     setupMax = Math.max(1, Math.round(declaredMax * 0.25));
-     resultMax = Math.max(1, Math.round(declaredMax * 0.15));
-     processMax = declaredMax - setupMax - resultMax;
+  // #region agent log
+  if (discipline === 'physics' && typeof fetch !== 'undefined') {
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
+      body: JSON.stringify({
+        sessionId: '875c85',
+        runId: 'post-fix',
+        hypothesisId: 'H2',
+        location: 'mathScoringUtils.ts:transformToMathSteps:physics',
+        message: 'raw sub scores vs safeParse',
+        data: {
+          inSetup: subResult.setup,
+          inProcess: subResult.process,
+          inResult: subResult.result,
+          inLogic: subResult.logic,
+          rawSetup,
+          rawProcess,
+          rawResult,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
   }
+  // #endregion
+
+  const { declaredMax, setupMax, processMax, resultMax } = getStemSubBucketMaxes(subResult.max_points);
 
   let labels: {
     setup: string;

@@ -11,6 +11,7 @@ import {
   Subject,
 } from "./types";
 import { StrategyFactory } from "./strategies/StrategyFactory";
+import { allocateStemSubQuartetFromEarned } from "./utils/mathScoringUtils";
 
 const STRICT_MATH_FORMAT_RULES = `You are an expert STEM tutor and a strict JSON API worker. Your outputs are rendered by KaTeX on the frontend. You MUST strictly adhere to the following LaTeX formatting rules to prevent parsing errors ("Math rendering failed"). Failure to follow these rules will crash the application.
 
@@ -96,8 +97,9 @@ const MATH_STEM_VIZ_APPENDIX = `
 
 # MATH STEM — visualization_code（結構提醒，不改評分欄位）
 每一個 stem_sub_results 項目必須包含 "visualization_code" 鍵：其值為 { "explanation": "...", "visualizations": [ ... ] } 或 null。
-若小題涉及幾何、座標、函數圖形、向量、圓錐曲線、積分面積等需要精準圖示者，不得以純文字描述代替圖形；應輸出 svg_diagram（欄位 svgCode，完整 <svg>...</svg>）、3D 用 plotly_chart、函數圖優先 python_plot（func_str、x_range、y_range 與現有沙箱一致）。僅當無法以上述類型表達時，可使用 type "python_script" 並提供完整腳本字串（欄位 code）；前端僅展示程式碼、不執行。
-visualizations[].type 可使用：svg_diagram、plotly_chart、python_plot、python_script（後者僅備援）。
+若小題涉及幾何、座標、函數圖形、向量、圓錐曲線、積分面積等需要精準圖示者，不得以純文字描述代替圖形。**題目影像中有印刷幾何圖（多邊形、塗色區、座標示意等）時，必須輸出 geometry_json（依科目策略之 topology／solver，欄位 code）或完整 svg_diagram（欄位 svgCode，完整 <svg>...</svg>）；禁止用空的或僅有標題的 plotly_chart 充當圖形。** 3D 空間幾何用 plotly_chart（data 須含可繪製的 traces）；平面函數圖優先 python_plot（func_str、x_range、y_range 與現有沙箱一致）。僅當無法以上述類型表達時，可使用 type "python_script" 並提供完整腳本字串（欄位 code）；前端僅展示程式碼、不執行。
+visualizations[].type 可使用：geometry_json、svg_diagram、plotly_chart、python_plot、python_script（後者僅備援）。
+純代數演算、無任何圖示需求時可將 visualization_code 設為 null。
 嚴禁改動 setup、process、result、logic、max_points 的語意與加總規則；visualization_code 為獨立輔助欄位，不得刪減或取代評分 JSON 結構。
 `;
 
@@ -706,6 +708,65 @@ export async function runSubjectExpertAnalysis(content: string, subjectName: str
   return safeJsonParse(result.text);
 }
 
+/** Phase3 物理：模型常漏回 stem_sub 四分項（日誌為 undefined），改由 final_score × 配分權重回填 */
+function coerceModeratorFiniteNumber(v: unknown): number | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const t = v.trim().replace(/[\uFF10-\uFF19]/g, (ch) =>
+      String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
+    );
+    const m = t.match(/-?[0-9]+(\.[0-9]+)?/);
+    if (m) return parseFloat(m[0]);
+  }
+  return undefined;
+}
+
+function stemPhysicsQuartetUnset(sub: Record<string, unknown>): boolean {
+  return (['setup', 'process', 'result', 'logic'] as const).every((k) => {
+    const v = sub[k];
+    return !(typeof v === 'number' && Number.isFinite(v));
+  });
+}
+
+function normalizePhysicsStemSubScoresFromModerator(parsed: Record<string, unknown>) {
+  const stems = parsed.stem_sub_results;
+  if (!Array.isArray(stems) || stems.length === 0) return;
+
+  const unsetIdx = stems
+    .map((s, i) => (stemPhysicsQuartetUnset(s as Record<string, unknown>) ? i : -1))
+    .filter((i) => i >= 0);
+  if (unsetIdx.length === 0) return;
+
+  const finalScore =
+    coerceModeratorFiniteNumber(parsed.final_score) ??
+    coerceModeratorFiniteNumber((parsed.ceec_results as { total_score?: unknown } | undefined)?.total_score);
+  if (finalScore === undefined || finalScore < 0) return;
+
+  const maxFor = (s: Record<string, unknown>) => coerceModeratorFiniteNumber(s.max_points) ?? 5;
+  const totalMaxAll = stems.reduce((acc, s) => acc + maxFor(s as Record<string, unknown>), 0);
+  if (totalMaxAll <= 0) return;
+
+  const unsetMaxSum = unsetIdx.reduce((acc, i) => acc + maxFor(stems[i] as Record<string, unknown>), 0);
+  const earnedBudget = Math.round(finalScore * (unsetMaxSum / totalMaxAll) * 2) / 2;
+
+  let pool = earnedBudget;
+  unsetIdx.forEach((idx, j) => {
+    const sub = stems[idx] as Record<string, unknown>;
+    const wi = maxFor(sub);
+    let part =
+      j === unsetIdx.length - 1 ? pool : Math.round((earnedBudget * wi) / unsetMaxSum * 2) / 2;
+    if (part < 0) part = 0;
+    if (part > pool) part = pool;
+    pool -= part;
+
+    const q = allocateStemSubQuartetFromEarned(part, sub.max_points);
+    sub.setup = q.setup;
+    sub.process = q.process;
+    sub.result = q.result;
+    sub.logic = q.logic;
+  });
+}
+
 export async function runModeratorSynthesis(
   content: string,
   subjectName: string,
@@ -775,6 +836,8 @@ export async function runModeratorSynthesis(
       : 0;
   fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H2',location:'geminiService.ts:runModeratorSynthesis:contents',message:'phase3 payload shape',data:{subjectId:subjectId??null,subjectName,useMultimodal,hasVisionUrls,inlinePartCount,contentLen:content.length,contentPreview:content.slice(0,400)},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
+
+  const physicsStemGradeRequired = /物理|physics/i.test(subjectName);
   
   const baseConfig = {
     responseMimeType: "application/json" as const,
@@ -807,6 +870,9 @@ export async function runModeratorSynthesis(
             type: Type.ARRAY,
             items: {
               type: Type.OBJECT,
+              ...(physicsStemGradeRequired
+                ? { required: ['sub_id', 'setup', 'process', 'result', 'logic', 'max_points', 'feedback'] }
+                : {}),
               properties: {
                 sub_id: { type: Type.STRING },
                 sub_stem_discipline: {
@@ -1105,6 +1171,46 @@ export async function runModeratorSynthesis(
     for (const sub of parsed.stem_sub_results as { key_molecules_smiles?: unknown }[]) {
       if (!Array.isArray(sub.key_molecules_smiles)) sub.key_molecules_smiles = [];
     }
+    if (/物理|physics/i.test(subjectName)) {
+      normalizePhysicsStemSubScoresFromModerator(parsed as Record<string, unknown>);
+    }
+    // #region agent log
+    if (/物理|physics/i.test(subjectName) && parsed.stem_sub_results?.[0]) {
+      const s0 = parsed.stem_sub_results[0] as Record<string, unknown>;
+      const vc = s0.visualization_code;
+      const v0 =
+        vc && typeof vc === 'object' && !Array.isArray(vc) && Array.isArray((vc as { visualizations?: unknown }).visualizations)
+          ? (vc as { visualizations: unknown[] }).visualizations[0]
+          : null;
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
+        body: JSON.stringify({
+          sessionId: '875c85',
+          runId: 'post-fix',
+          hypothesisId: 'H1-H5',
+          location: 'geminiService.ts:runModeratorSynthesis:physicsStem0',
+          message: 'phase3 first stem snapshot',
+          data: {
+            final_score: parsed.final_score,
+            max_score: parsed.max_score,
+            setup: s0.setup,
+            process: s0.process,
+            result: s0.result,
+            logic: s0.logic,
+            types: [typeof s0.setup, typeof s0.process, typeof s0.result, typeof s0.logic],
+            feedbackLen: String(s0.feedback ?? '').length,
+            viz0Type: v0 && typeof v0 === 'object' ? (v0 as { type?: string }).type : null,
+            viz0DataLen:
+              v0 && typeof v0 === 'object' && Array.isArray((v0 as { data?: unknown }).data)
+                ? (v0 as { data: unknown[] }).data.length
+                : null,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
   }
   return parsed;
 }
