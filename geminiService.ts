@@ -1253,24 +1253,23 @@ export async function generateReferenceSolution(
          - If applicable, provide **Method 2** (Alternative/Faster Approach) with the same rigor.`
     }
     
-    # VISUALIZATION ENGINE (JSON OBJECT):
+    # VISUALIZATION ENGINE (JSON OBJECT) — 標準詳解與完整批改相同，不可省略可畫圖之題：
     ${isComposition 
       ? 'Do not generate visualizations for composition tasks.'
-      : `For STEM subjects (Math, Physics, Chemistry, Biology, Earth Science), you MUST generate a 3D Interactive Plot using \`plotly_chart\` to illustrate the concepts (e.g., force vectors, molecular structures, geometric shapes).
+      : `Each \`stem_sub_results[]\` item MUST include the key \`visualization_code\`: either \`null\` (only if that sub-question is purely symbolic algebra with **no** geometric, graphical, vector, or solid-figure meaning) **or** an object \`{ "explanation": "...", "visualizations": [ ... ] }\` with **at least one** client-renderable item.
+
+    **ABSOLUTE PROHIBITION**: Do NOT output \`plotly_chart\` with an **empty** \`"data": []\` array — the UI rejects it and the student sees no figure. Every \`plotly_chart\` MUST have \`data\` as a **non-empty** array of Plotly traces (numeric coordinates; strings are coerced but prefer JSON numbers).
+
+    **Types (same as full grading)**: \`plotly_chart\` (3D/2D traces), \`geometry_json\` / \`svg_diagram\` for plane figures, \`python_plot\` for explicit function graphs when appropriate, \`mol3d\` for chemistry, etc.
 
     **3D geometry correctness (CRITICAL)**:
     - For a **right circular cone**, use \`mesh3d\` with a circular base (many vertices around the circle, e.g. 48 segments) plus apex—never approximate a cone with only a 4-vertex tetrahedron.
     - For a **surface of revolution** (e.g. rotating a curve around the x-axis), include BOTH a \`scatter3d\` trace for the generatrix AND a semi-transparent \`mesh3d\` for the swept surface (adequate resolution in both x and angle).
-    
-    **JSON Structure**:
+
+    **JSON shape (conceptual)**:
     "visualization_code": {
-       "explanation": "Brief explanation of the visual...",
-       "visualizations": [{
-          "type": "plotly_chart",
-          "title": "Topic Title",
-          "data": [ ...traces array... ],
-          "layout": { ...layout object... }
-       }]
+       "explanation": "繁中簡述圖形與題意對應",
+       "visualizations": [{ "type": "plotly_chart", "title": "…", "data": [ /* ≥1 trace */ ], "layout": { "scene": { ... } } }]
     }`
     }
     
@@ -1287,7 +1286,7 @@ export async function generateReferenceSolution(
           "max_points": 10,
           "feedback": "Analysis",
           "correct_calculation": "${isComposition ? 'Model Essay Content' : 'Full step-by-step derivation with $$...$$ math blocks. MUST include 【已知條件】, 【核心公式】, 【代入數據】, 【逐步推導】, 【最終答案】.'}",
-          "visualization_code": ${isComposition ? 'null' : '{ "explanation": "...", "visualizations": [{ "type": "plotly_chart", "data": [], "layout": {} }] }'},
+          "visualization_code": ${isComposition ? 'null' : '{ "explanation": "圖示與題意", "visualizations": [{ "type": "plotly_chart", "title": "示意標題", "data": [{ "type": "scatter3d", "mode": "lines", "x": [0, 1], "y": [0, 0], "z": [0, 0], "line": { "width": 4, "color": "#3b82f6" } }], "layout": { "scene": { "aspectmode": "cube", "xaxis": { "title": "x" }, "yaxis": { "title": "y" }, "zaxis": { "title": "z" } } } }] }'},
           "setup": 0, "process": 0, "result": 0, "logic": 0
         }
       ],
