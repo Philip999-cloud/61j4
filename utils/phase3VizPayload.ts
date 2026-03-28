@@ -136,22 +136,92 @@ const MOON_PHASES: Phase2MoonPhase[] = [
   'waning_crescent',
 ];
 
+/** 模型常誤用 vectors／arrows 或塞在 data 內；與 forces 合併為單一陣列再解析 */
+function resolveFreeBodyForcesArray(viz: Record<string, unknown>): unknown[] | null {
+  const pick = (v: unknown): unknown[] | null =>
+    Array.isArray(v) && v.length > 0 ? v : null;
+  let arr =
+    pick(viz.forces) ??
+    pick(viz.vectors) ??
+    pick(viz.force_vectors) ??
+    pick(viz.forceVectors) ??
+    pick(viz.arrows);
+  if (!arr && viz.data != null && typeof viz.data === 'object' && !Array.isArray(viz.data)) {
+    const d = viz.data as Record<string, unknown>;
+    arr =
+      pick(d.forces) ??
+      pick(d.vectors) ??
+      pick(d.force_vectors) ??
+      pick(d.arrows) ??
+      null;
+  }
+  return arr;
+}
+
+/** 文字方向 → 與 FreeBodyDiagram 一致：0 右、90 上、180 左、270 下 */
+function directionKeywordToAngle(dir: unknown): number | null {
+  if (dir == null) return null;
+  if (typeof dir === 'number' && Number.isFinite(dir)) return dir;
+  const s = String(dir).trim();
+  if (!s) return null;
+  const lower = s.toLowerCase();
+  if (/^(right|east|0)$/.test(lower) || s === '右') return 0;
+  if (/^(up|north|90)$/.test(lower) || s === '上' || s.includes('向上') || s.includes('朝上')) return 90;
+  if (/^(left|west|180)$/.test(lower) || s === '左') return 180;
+  if (/^(down|south|270)$/.test(lower) || s === '下' || s.includes('向下') || s.includes('朝下')) return 270;
+  return null;
+}
+
 export function parseFreeBodyForces(viz: Record<string, unknown>): Phase2FreeBodyForcesPayload | null {
-  const forcesRaw = viz.forces;
-  if (!Array.isArray(forcesRaw) || forcesRaw.length === 0) return null;
+  const forcesRaw = resolveFreeBodyForcesArray(viz);
+  if (!forcesRaw || forcesRaw.length === 0) return null;
   const forces: Phase2FreeBodyForcesPayload['forces'] = [];
   for (const f of forcesRaw) {
     if (!f || typeof f !== 'object') continue;
     const o = f as Record<string, unknown>;
     const name =
-      typeof o.name === 'string' && o.name.trim()
-        ? o.name.trim()
-        : typeof o.label === 'string' && o.label.trim()
-          ? o.label.trim()
-          : '';
+      (typeof o.name === 'string' && o.name.trim()) ||
+      (typeof o.label === 'string' && o.label.trim()) ||
+      (typeof o.text === 'string' && o.text.trim()) ||
+      (typeof o.force === 'string' && o.force.trim()) ||
+      (typeof o.symbol === 'string' && o.symbol.trim()) ||
+      (typeof o.id === 'string' && o.id.trim()) ||
+      '';
     if (!name) continue;
-    const magnitude = num(o.magnitude ?? o.mag ?? 1, 1);
-    const angle = num(o.angle ?? o.angle_deg ?? o.angleDeg ?? 0, 0);
+
+    const fxRaw = o.fx ?? o.Fx ?? o.x_component ?? o.x;
+    const fyRaw = o.fy ?? o.Fy ?? o.y_component ?? o.y;
+    const hasFx = fxRaw != null && String(fxRaw).trim() !== '';
+    const hasFy = fyRaw != null && String(fyRaw).trim() !== '';
+    if (hasFx || hasFy) {
+      const fxn = Number(fxRaw ?? 0);
+      const fyn = Number(fyRaw ?? 0);
+      if (Number.isFinite(fxn) && Number.isFinite(fyn) && (fxn !== 0 || fyn !== 0)) {
+        const angleDeg = (Math.atan2(fyn, fxn) * 180) / Math.PI;
+        const magRaw = o.magnitude ?? o.mag ?? o.length;
+        const magnitude =
+          magRaw != null && Number.isFinite(Number(magRaw)) && Number(magRaw) > 0
+            ? Number(magRaw)
+            : Math.hypot(fxn, fyn) || 1;
+        forces.push({ name, magnitude, angle: angleDeg });
+        continue;
+      }
+    }
+
+    const magRaw = o.magnitude ?? o.mag ?? o.length ?? o.size ?? 1;
+    const magnitude =
+      typeof magRaw === 'string' && magRaw.trim() !== '' && !Number.isNaN(Number(magRaw))
+        ? Number(magRaw)
+        : num(magRaw, 1);
+
+    let angle: number;
+    const angRaw = o.angle ?? o.angle_deg ?? o.angleDeg ?? o.theta;
+    if (angRaw != null && String(angRaw).trim() !== '' && Number.isFinite(Number(angRaw))) {
+      angle = num(angRaw, 0);
+    } else {
+      const fromDir = directionKeywordToAngle(o.direction ?? o.dir ?? o.orientation ?? o.way);
+      angle = fromDir != null ? fromDir : 0;
+    }
     forces.push({ name, magnitude, angle });
   }
   if (forces.length === 0) return null;

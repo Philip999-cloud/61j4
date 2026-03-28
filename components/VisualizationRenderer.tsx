@@ -66,8 +66,65 @@ import {
   filterRenderableVisualizations,
   geometryJsonItemRenderable,
   plotlyDataLooksRenderable,
+  validateVisualizationItem,
   visualizationMol3dLoadable,
 } from '../utils/validateStemVisualization';
+
+/** 與 filterRenderableVisualizations 一致，避免 gate 與實際過濾結果不同步 */
+function vizListItemIsRenderable(item: unknown): boolean {
+  return validateVisualizationItem(item).valid;
+}
+
+function stableStringifyForVizFingerprint(v: unknown): string {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function vizRawHadFreeBodyDiagram(raw: unknown[] | undefined | null): boolean {
+  if (!Array.isArray(raw)) return false;
+  return raw.some(
+    (x) =>
+      x &&
+      typeof x === 'object' &&
+      !Array.isArray(x) &&
+      (x as { type?: string }).type === 'free_body_diagram',
+  );
+}
+
+/** 說明像在描述受力圖，但模型未給可解析的 forces[] 時，提供保守示意圖 */
+function explanationSuggestsFbdFallback(explanation: string): boolean {
+  const t = explanation.trim();
+  if (t.length < 4) return false;
+  return (
+    /受力|正向力|法向力|摩擦力|彈力|張力|支撐力|靜力平衡|靜力|free\s*body|FBD/i.test(t) &&
+    (/力圖|分析圖|向量|箭頭|方向|顯示|示意/i.test(t) || /摩擦|正向|法向/.test(t))
+  );
+}
+
+function buildFbdFallbackFromExplanation(
+  explanation: string,
+  rawVisualizations: unknown[] | undefined | null,
+): VisualizationItem | null {
+  if (!explanationSuggestsFbdFallback(explanation)) return null;
+  const hadTypedFbd = vizRawHadFreeBodyDiagram(rawVisualizations);
+  const narrativeDiagram =
+    /力圖|分析圖|顯示[^。]*方向|受力分析/.test(explanation);
+  if (!hadTypedFbd && !narrativeDiagram) return null;
+  return {
+    type: 'free_body_diagram',
+    title: '受力示意（對照說明）',
+    caption: '向量方向配合題述示意；長度非實際數值比。',
+    forces: [
+      { name: 'N', magnitude: 1, angle: 90 },
+      { name: 'mg', magnitude: 1.2, angle: 270 },
+      { name: 'f', magnitude: 0.8, angle: 180 },
+    ],
+    objectShape: 'box',
+  } as VisualizationItem;
+}
 
 function isChemStoichiometryBlock(text: string): boolean {
   if (!text) return false;
@@ -305,70 +362,7 @@ function isVizRendererContentRenderable(
 
   const v = content.visualizations;
   if (Array.isArray(v) && v.length > 0) {
-    const anyDisplayable = v.some((item: any) => {
-      if (!item || typeof item !== 'object') return false;
-      if (item.type === 'svg_diagram') {
-        const s = normalizeSvgDiagramMarkup(
-          (typeof item.svgCode === 'string' && item.svgCode.trim()) ||
-            (typeof item.code === 'string' && item.code.trim()) ||
-            '',
-        );
-        return !!s;
-      }
-      if (item.type === 'geometry_json') {
-        return isGeometryJsonVizRenderable(item);
-      }
-      if (item.type === 'plotly_chart') {
-        return plotlyDataLooksRenderable(item.data);
-      }
-      if (item.type === 'python_script') {
-        return typeof item.code === 'string' && item.code.trim().length > 0;
-      }
-      if (item.type === 'chem_aromatic_ring') {
-        return parsePhase3ChemAromatic(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'stem_xy_chart') {
-        return parsePhase3StemXY(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'titration_curve') {
-        return parseTitrationCurve(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'circuit_schematic') {
-        return parseCircuitSchematic(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'chem_smiles_2d_lone_pairs') {
-        return parseChemSmiles2D(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'biology_punnett_square') {
-        return parsePunnettSquare(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'biology_pedigree') {
-        return parsePedigree(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'mermaid_flowchart') {
-        return parseMermaidFlowchart(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'earth_celestial_geometry') {
-        return parseEarthCelestial(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'earth_contour_map') {
-        return parseEarthContour(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'energy_level_diagram') {
-        return parseEnergyLevelDiagram(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'periodic_table_highlight') {
-        return parsePeriodicTableHighlight(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'physics_wave_interference' || item.type === 'physics_snell_diagram') {
-        return true;
-      }
-      if (item.type === 'mol3d') {
-        return visualizationMol3dLoadable(item as Record<string, unknown>);
-      }
-      return true;
-    });
-    if (anyDisplayable) return true;
+    if (v.some((item: unknown) => vizListItemIsRenderable(item))) return true;
   }
 
   if (Array.isArray(content.compounds) && content.compounds.length > 0) return true;
@@ -462,70 +456,7 @@ function isVizRendererContentRenderable(
 function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, compoundsProp?: Compound[]): boolean {
   const v = data.visualizations;
   if (Array.isArray(v) && v.length > 0) {
-    const anyDisplayable = v.some((item: any) => {
-      if (!item || typeof item !== 'object') return false;
-      if (item.type === 'svg_diagram') {
-        const s = normalizeSvgDiagramMarkup(
-          (typeof item.svgCode === 'string' && item.svgCode.trim()) ||
-            (typeof item.code === 'string' && item.code.trim()) ||
-            '',
-        );
-        return !!s;
-      }
-      if (item.type === 'geometry_json') {
-        return isGeometryJsonVizRenderable(item);
-      }
-      if (item.type === 'plotly_chart') {
-        return plotlyDataLooksRenderable(item.data);
-      }
-      if (item.type === 'python_script') {
-        return typeof item.code === 'string' && item.code.trim().length > 0;
-      }
-      if (item.type === 'chem_aromatic_ring') {
-        return parsePhase3ChemAromatic(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'stem_xy_chart') {
-        return parsePhase3StemXY(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'titration_curve') {
-        return parseTitrationCurve(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'circuit_schematic') {
-        return parseCircuitSchematic(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'chem_smiles_2d_lone_pairs') {
-        return parseChemSmiles2D(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'biology_punnett_square') {
-        return parsePunnettSquare(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'biology_pedigree') {
-        return parsePedigree(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'mermaid_flowchart') {
-        return parseMermaidFlowchart(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'earth_celestial_geometry') {
-        return parseEarthCelestial(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'earth_contour_map') {
-        return parseEarthContour(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'energy_level_diagram') {
-        return parseEnergyLevelDiagram(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'periodic_table_highlight') {
-        return parsePeriodicTableHighlight(item as unknown as Record<string, unknown>) != null;
-      }
-      if (item.type === 'physics_wave_interference' || item.type === 'physics_snell_diagram') {
-        return true;
-      }
-      if (item.type === 'mol3d') {
-        return visualizationMol3dLoadable(item as Record<string, unknown>);
-      }
-      return true;
-    });
-    if (anyDisplayable) return true;
+    if (v.some((item: unknown) => vizListItemIsRenderable(item))) return true;
   }
   if (Array.isArray(data.compounds) && data.compounds.length > 0) return true;
   if (Array.isArray(compoundsProp) && compoundsProp.length > 0) return true;
@@ -683,6 +614,20 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
 }) => {
   const chartId = useRef(`plotly-${Math.random().toString(36).substr(2, 9)}`);
   const [plotlyWebGlNote, setPlotlyWebGlNote] = useState<string | null>(null);
+
+  const plotInputsSig = useMemo(() => {
+    try {
+      return JSON.stringify({
+        data,
+        layout: layout ?? null,
+        title: title ?? null,
+        caption: caption ?? null,
+        explanation: explanation ?? null,
+      });
+    } catch {
+      return `${String(data)}|${String(layout)}|${title}|${caption}|${explanation}`;
+    }
+  }, [data, layout, title, caption, explanation]);
 
   useEffect(() => {
     setPlotlyWebGlNote(null);
@@ -1135,15 +1080,15 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
         /* ignore */
       }
     };
-  }, [data, layout, title, caption, explanation]);
+  }, [plotInputsSig]);
 
   return (
     <div className="w-full space-y-1">
       <div
         id={chartId.current}
         data-asea-will-read-frequently
-        className="w-full h-full min-h-[300px] sm:min-h-[360px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-[var(--bg-main)] shadow-inner"
-        style={{ minHeight: 320 }}
+        className="w-full h-full min-h-[360px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-[var(--bg-main)] shadow-inner"
+        style={{ minHeight: 360 }}
       />
       {plotlyWebGlNote ? (
         <p className="text-xs text-amber-700 dark:text-amber-300 px-1">{plotlyWebGlNote}</p>
@@ -1317,10 +1262,33 @@ export const VisualizationRenderer: React.FC<{
     [allowPrefetchedGeometryFallback, prefetchedGeometryJson],
   );
 
+  const vizParseInputSig = useMemo(() => {
+    const partGeo =
+      prefetchedGeometryJson == null ? '' : stableStringifyForVizFingerprint(prefetchedGeometryJson);
+    const partCompounds =
+      compoundsProp == null ? '' : stableStringifyForVizFingerprint(compoundsProp);
+    const partContent =
+      content == null
+        ? 'null'
+        : typeof content === 'string'
+          ? `str:${content}`
+          : stableStringifyForVizFingerprint(content);
+    return `${allowPrefetchedGeometryFallback ? '1' : '0'}|${partGeo}|${partCompounds}|${partContent}`;
+  }, [content, compoundsProp, allowPrefetchedGeometryFallback, prefetchedGeometryJson]);
+
+  const lastVizParseSigRef = useRef<string | null>(null);
+
   const prefetchedVizTitle = prefetchedGeometryVizTitle?.trim() || '題目圖形';
 
+  const prefetchGeoSig = useMemo(
+    () =>
+      prefetchedGeometryJson == null ? '' : stableStringifyForVizFingerprint(prefetchedGeometryJson),
+    [prefetchedGeometryJson],
+  );
+
   const displayVisualizations = useMemo((): VisualizationItem[] => {
-    const base = filterRenderableVisualizations(vizPayload?.visualizations) as VisualizationItem[];
+    const raw = vizPayload?.visualizations;
+    const base = filterRenderableVisualizations(raw) as VisualizationItem[];
     if (base.length > 0) return base;
     if (
       allowPrefetchedGeometryFallback &&
@@ -1335,23 +1303,33 @@ export const VisualizationRenderer: React.FC<{
         } as VisualizationItem,
       ];
     }
+    const ex = typeof vizPayload?.explanation === 'string' ? vizPayload.explanation.trim() : '';
+    const fbdFallback = buildFbdFallbackFromExplanation(ex, raw as unknown[] | undefined);
+    if (fbdFallback) return [fbdFallback];
     return base;
   }, [
     vizPayload?.visualizations,
+    vizPayload?.explanation,
     allowPrefetchedGeometryFallback,
+    prefetchGeoSig,
     prefetchedGeometryJson,
     prefetchedVizTitle,
   ]);
 
   useEffect(() => {
     if (!isVizRendererContentRenderable(content, compoundsProp, prefetchGateOpts)) {
+      lastVizParseSigRef.current = null;
       setParsedData(null);
       setError(null);
       return;
     }
     if (!content) return;
 
-    setParsedData(null);
+    if (lastVizParseSigRef.current === vizParseInputSig) {
+      return;
+    }
+    lastVizParseSigRef.current = vizParseInputSig;
+
     setError(null);
 
     let parsed: any = null;
@@ -1625,7 +1603,9 @@ export const VisualizationRenderer: React.FC<{
            setParsedData(parsed);
        }
     }
-  }, [content, compoundsProp, prefetchGateOpts]);
+    // vizParseInputSig 已涵蓋 content／compounds／prefetch 幾何與開關
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vizParseInputSig]);
 
   if (!isVizRendererContentRenderable(content, compoundsProp, prefetchGateOpts)) {
     return null;
@@ -2033,7 +2013,7 @@ export const VisualizationRenderer: React.FC<{
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 max-h-[min(560px,80vh)] overflow-y-auto overflow-x-auto max-w-full relative [contain:layout]"
+                    className="flex min-h-[240px] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-x-auto overflow-y-hidden max-w-full relative"
                   >
                     <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] py-1" />
                   </div>
@@ -2102,7 +2082,7 @@ export const VisualizationRenderer: React.FC<{
                     </h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 max-h-[min(560px,80vh)] overflow-y-auto overflow-x-auto max-w-full relative [contain:layout]"
+                    className="flex min-h-[240px] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-x-auto overflow-y-hidden max-w-full relative"
                   >
                     <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] py-1" />
                   </div>
@@ -2136,7 +2116,7 @@ export const VisualizationRenderer: React.FC<{
                       <div className="mb-3 flex justify-between items-center px-1">
                          <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{viz.title || '3D Molecular Model'}</h5>
                       </div>
-                      <div className="rounded-xl overflow-hidden border border-[var(--border-color)]/60 bg-[var(--bg-main)]">
+                      <div className="min-h-[280px] rounded-xl overflow-hidden border border-[var(--border-color)]/60 bg-[var(--bg-main)]">
                         <Viewer3D
                           cid={viz.cid}
                           smiles={viz.smiles}
