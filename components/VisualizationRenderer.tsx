@@ -805,17 +805,45 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       return false;
     };
 
+    /** 端點附近線段斜率過陡（如圓弧 y=k−√(r²−x²) 近邊界）時，Catmull-Rom／spline 易外插成鉤狀，應改線性連線 */
+    const endpointsHaveSteepSlope = (xArr: any[], yArr: any[], threshold = 4): boolean => {
+      if (!Array.isArray(xArr) || !Array.isArray(yArr) || xArr.length < 4) return false;
+      const absSlopeAt = (i: number): number | null => {
+        const x0 = Number(xArr[i]),
+          y0 = Number(yArr[i]);
+        const x1 = Number(xArr[i + 1]),
+          y1 = Number(yArr[i + 1]);
+        if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return null;
+        const dx = x1 - x0;
+        if (Math.abs(dx) < 1e-12) return Infinity;
+        return Math.abs((y1 - y0) / dx);
+      };
+      const steep = (i: number) => {
+        const s = absSlopeAt(i);
+        return s != null && s > threshold;
+      };
+      const n = xArr.length;
+      return steep(0) || steep(1) || steep(n - 3) || steep(n - 2);
+    };
+
     /**
      * Smart Spline Heuristic：
      * - 閉合 + 點數少(< 10) + 有銳角 → 幾何多邊形 → 保持線性
      * - 其餘 → 函數曲線 → 套用平滑
      */
-    const shouldSmoothTrace = (xArr: any[], yArr: any[]): boolean => {
+    const traceNameSuggestsCircleArc = (trace: { name?: string } | undefined): boolean => {
+      const nm = String(trace?.name ?? '');
+      return /圓弧|圆弧|下半圓|上半圓|circular\s*arc|circle\s*\(/i.test(nm);
+    };
+
+    const shouldSmoothTrace = (xArr: any[], yArr: any[], trace?: { name?: string }): boolean => {
       if (!Array.isArray(xArr) || !Array.isArray(yArr)) return false;
       const len = xArr.length;
       if (len < 3) return false;
       // 含有字串型 x（類別軸）→ 不平滑
       if (xArr.some((v: any) => typeof v === 'string') || yArr.some((v: any) => typeof v === 'string')) return false;
+      if (traceNameSuggestsCircleArc(trace)) return false;
+      if (endpointsHaveSteepSlope(xArr, yArr)) return false;
       // 資料點很多 → 幾乎一定是函數曲線
       if (len > 10) return true;
       // 少量點：若首尾閉合且有銳角 → 幾何多邊形
@@ -837,7 +865,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
                 if (xLength > 2 && yLength > 2) {
                     const lineBase =
                         newTrace.line != null && typeof newTrace.line === 'object' ? newTrace.line : {};
-                    if (shouldSmoothTrace(newTrace.x, newTrace.y)) {
+                    if (shouldSmoothTrace(newTrace.x, newTrace.y, newTrace)) {
                         // ✅ 函數曲線：自適應細分 + Plotly spline
                         const smoothed = adaptiveSmoothTrace(newTrace.x, newTrace.y);
                         newTrace.x = smoothed.x;

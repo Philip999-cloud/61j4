@@ -1,6 +1,7 @@
 
 import { GradingStrategy } from './GradingStrategy';
 import { LinguisticAudit, SubjectExpertAnalysis } from '../types';
+import { PHYSICS_SUBQUESTION_VIZ_PROMPT_APPENDIX } from '../utils/mathScoringUtils';
 
 /** 力學 — 斜面、滑輪、彈簧、受力圖 */
 export const MECHANICS_SVG_RULES = `
@@ -284,6 +285,8 @@ export class PhysicsStrategy implements GradingStrategy {
     - coordination_multiply：錯合物／配位觀念（自然組含化學單元）時，用「雙牙基數×每基齒數=配位數」示意。
     範例："micro_lesson": null 或
     { "variant":"oxidation_timeline","steps":[{"label":"陽極","oxidation_state":0},{"label":"陰極產物","oxidation_state":-2}],"arrows":[{"from_index":0,"to_index":1}] }
+
+    ${PHYSICS_SUBQUESTION_VIZ_PROMPT_APPENDIX}
     `;
   }
 }

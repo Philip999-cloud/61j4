@@ -129,14 +129,19 @@ export class ChemistryStrategy implements GradingStrategy {
 
     IF AND ONLY IF the problem belongs to one of these 8 categories, generate the appropriate Plotly, SVG, or mol3d visualization. OTHERWISE, SKIP THE VISUALIZATION.
 
-    # ALTERNATIVE SOLUTIONS (MANDATORY)
-    If CORRECT, you MUST populate "alternative_solutions" with **AT LEAST SEVEN (7)** distinct alternative methods (e.g. Law of Conservation, Electron Balance).
-    
-    **CRITICAL DETAILED REQUIREMENT FOR MULTIPLE SOLUTIONS**:
-    Each alternative solution MUST be EXTREMELY DETAILED. You must provide:
-    1. A clear Method Name (e.g., "解法一：電荷守恆法").
-    2. Step-by-step mathematical derivations (using $$...$$).
-    3. Thorough explanatory text in Traditional Chinese detailing "why" this method works, so students can fully understand the logic. Do NOT just give a brief summary or a single equation.
+    # ALTERNATIVE SOLUTIONS — STRUCTURED ISOLATION (MANDATORY WHEN CORRECT)
+    If CORRECT, you MUST still populate **"alternative_solutions"** with **AT LEAST SEVEN (7)** string entries (short labels or one-line summaries per method) for backward compatibility.
+    You MUST **also** populate **"alternative_methods"** with **at least seven (7)** objects — **one object per distinct solution path**, strictly isolated:
+    - **FORBIDDEN**: Merging two methods into one object, or cramming multiple unrelated derivations into a single \`steps\` string.
+    - Each object: \`{ "method_name": "解法一：…", "description": "繁中說明此法為何成立…", "steps": [ "…", "…" ] }\`.
+    - **steps array**: **One major step per array element** — one stoichiometry row, one \`$$...$$\` block, one \`\\ce{...}\` line, or one \`<smiles>...</smiles>\` tag per element (not multiple unrelated equations in one string).
+    - If JSON length is tight, shorten prose but **never** merge two methods into one object; prefer valid complete JSON over runaway length.
+
+    # CHEMISTRY SOLUTION TYPOGRAPHY (算式／化學式逐行 — CRITICAL)
+    In **feedback**, **concept_correction**, **correct_calculation**, and each **alternative_methods[].steps** string:
+    - Put **one** major equation, reaction, or \`\\ce{...}\` relation per display line or per \`steps[]\` item; use \`$$ \\begin{aligned} ... \\end{aligned} $$\` with **one relation per row** (end each row with \`\\\\\` per JSON escaping rules) **or** multiple separate \`$$...$$\` blocks separated by newlines.
+    - **FORBIDDEN**: Chaining many \`=\` or reaction arrows in a single run-on line; stuffing several \`<smiles>\` tags on one line — use line breaks between blocks.
+    - Stoichiometry **ICE / arrow-process** tables remain inside a single \`$$\\begin{array}...\\end{array}$$\` (four rows per your rules); do not interleave unrelated methods inside one table.
 
     # 🎯 CRITICAL POINT ALLOCATION (配分與評分精準度 - 極度重要)
     1. **Extract Exact Points (精準抓取滿分)**: You MUST carefully read the inputted "Content" (Question OCR). Look for keywords like "占 4 分", "每題 5 分", "(8分)", or "配分: 10". 
@@ -183,8 +188,20 @@ export class ChemistryStrategy implements GradingStrategy {
           "logic": 0,
           "feedback": "Step-by-Step Analysis...",
           "concept_correction": "觀念辯正...",
-          "alternative_solutions": ["Method 1 Details...", "Method 2 Details...", "Method 3 Details..."],
-          "correct_calculation": "First Step Calculation: $$...table...$$",
+          "alternative_solutions": ["解法一摘要…", "解法二摘要…", "…共至少七筆字串"],
+          "alternative_methods": [
+            {
+              "method_name": "解法一：電荷守恆法",
+              "description": "繁體中文說明此法為何適用…",
+              "steps": ["$$\\\\ce{...}$$", "$$\\\\text{…}$$"]
+            },
+            {
+              "method_name": "解法二：物料平衡",
+              "description": "…",
+              "steps": ["$$\\\\begin{array}{...}...\\\\end{array}$$"]
+            }
+          ],
+          "correct_calculation": "Step 1:\\n$$...$$\\nStep 2:\\n$$...$$",
           "annotations": ["Text"],
           "visualization_code": {
              "explanation": "Chemistry visualization explanation...",

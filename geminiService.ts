@@ -943,6 +943,20 @@ export async function runModeratorSynthesis(
                 correct_calculation: { type: Type.STRING },
                 concept_correction: { type: Type.STRING, nullable: true },
                 alternative_solutions: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
+                alternative_methods: {
+                  type: Type.ARRAY,
+                  nullable: true,
+                  description:
+                    '化學等科一題多解結構化：每物件為一獨立解法，含 method_name、description、steps 字串陣列',
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      method_name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      steps: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    },
+                  },
+                },
                 knowledge_tags: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
                 scientific_notation_and_units: { type: Type.STRING, nullable: true },
                 internal_verification: { type: Type.STRING, nullable: true },

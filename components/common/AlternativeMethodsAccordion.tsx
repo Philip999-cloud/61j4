@@ -6,7 +6,11 @@ import { SmartChemText } from '../VisualizationRenderer';
  * 全科目共用的「一題多解」摺疊面板（數學／物理／化學等 DRY）
  * 使用 state + 條件渲染取代原生 <details>，避免收合時寬高為 0 導致 PhysicsRenderer／LatexRenderer 展開瞬間排版坍縮。
  */
-export const AlternativeMethodsAccordion: React.FC<{ methods: AlternativeMethod[] }> = ({ methods }) => {
+export const AlternativeMethodsAccordion: React.FC<{
+  methods: AlternativeMethod[];
+  /** 題組多列時避免與他列摺疊 state／index 混淆，供 React key 前綴 */
+  keyPrefix?: string;
+}> = ({ methods, keyPrefix = '' }) => {
   const [openMap, setOpenMap] = useState<Record<number, boolean>>({});
 
   const toggle = (i: number) => {
@@ -14,13 +18,14 @@ export const AlternativeMethodsAccordion: React.FC<{ methods: AlternativeMethod[
   };
 
   if (!methods?.length) return null;
+  const rowKey = keyPrefix ? `${keyPrefix}-` : '';
   return (
     <div className="space-y-2">
       {methods.map((m, i) => {
         const isOpen = !!openMap[i];
         return (
           <div
-            key={i}
+            key={`${rowKey}alt-method-${i}`}
             className="border border-[var(--border-color)] rounded-xl bg-[var(--bg-main)] overflow-hidden transition-colors"
           >
             <button

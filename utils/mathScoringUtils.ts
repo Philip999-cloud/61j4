@@ -427,4 +427,22 @@ export const MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX = `
 - **Pure algebra / no diagram** for one sub: set \`visualization_code\` to \`null\` **only for that sub**.
 - **Types** (same as above sections): printed / regular-polygon → \`geometry_json\`; self-authored 2D → \`svg_diagram\` with full \`svgCode\`; 3D → \`plotly_chart\`; explicit functions → \`python_plot\` with required fields or \`plotly_chart\`.
 - **Scoring JSON**: Never remove or repurpose \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`, etc. \`visualization_code\` remains auxiliary only.
+- **Distinct figures per sub**: If sub-questions in a group have **different** figures (forces, circuits, trajectories, coordinates), you MUST NOT copy the parent stem's diagram unchanged into later rows — each row's \`visualization_code\` must match **that** sub's physics/geometry (adapt coordinates, forces, or traces accordingly).
+`;
+
+/**
+ * Phase 3 物理策略專用：題組內每一 `stem_sub_results` 子項獨立 `visualization_code`（力學 FBD、斜面、電路、光路、3D plotly 等）。
+ * 僅供 `generatePrompt` 拼接，不影響配分或轉錄。
+ */
+export const PHYSICS_SUBQUESTION_VIZ_PROMPT_APPENDIX = `
+# ════════════════════════════════════════════════════════════════════════════
+# SUB-QUESTION VISUALIZATION MANDATE — PHYSICS（物理題組子題獨立圖示 — CRITICAL）
+# ════════════════════════════════════════════════════════════════════════════
+- **Every** object in \`stem_sub_results[]\` MUST include the key \`visualization_code\`: either \`null\` **or** \`{ "explanation": "...", "visualizations": [ ... ] }\` with at least one **client-renderable** item when **that** sub-question needs a diagram (free-body, inclined plane, pulley, circuit, optics ray path, \`plotly_chart\` 3D trajectory, \`geometry_json\`, experiment graphs, etc.).
+- **Per \`sub_id\` binding**: \`visualization_code.explanation\` MUST describe the figure **for that sub-question only** and MUST mention that row's \`sub_id\` (題號／小題編號) in the **first sentence**. **FORBIDDEN**: placing diagrams only on the first \`stem_sub_results\` row while later rows have \`null\` yet their solution still relies on a different figure — each such row MUST carry its own \`visualization_code\`.
+- **Per-item titles**: Each \`visualizations[]\` item with a \`title\` SHOULD include that row's \`sub_id\` (e.g. "（乙）受力分析圖").
+- **Pure algebra / no figure** for one sub: \`visualization_code\` may be \`null\` **only for that sub**.
+- **Types**: Mechanics / circuits / optics → \`svg_diagram\` (\`svgCode\`) per sub-domain rules; 3D / fields / trajectories → \`plotly_chart\` with non-empty \`data\`; printed regular polygons (if any) → \`geometry_json\`; function plots → \`python_plot\` with required fields or \`plotly_chart\`.
+- **FORBIDDEN**: Reusing one parent-stem diagram for every sub when subs need different FBDs or circuits — adapt each row's payload to that sub's scenario.
+- **Scoring JSON**: Do not alter \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`; \`visualization_code\` is auxiliary only.
 `;

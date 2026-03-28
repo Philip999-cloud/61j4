@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { Check, X } from 'lucide-react';
-import { StemSubScore, MathStep, TextAnnotation, ParsedMathSegment } from '../../types';
+import {
+  StemSubScore,
+  MathStep,
+  TextAnnotation,
+  ParsedMathSegment,
+  type AlternativeMethod,
+} from '../../types';
 import {
   transformToMathSteps,
   calculateStepwiseScore,
@@ -15,6 +21,7 @@ import LatexRenderer from '../LatexRenderer';
 import { ZeroCompressionBlocks, zeroCompressionHasContent } from '../science/ZeroCompressionBlocks';
 import { CeecAnswerSheetFooter } from '../ceec/CeecAnswerSheetFooter';
 import { MicroLessonBlock } from '../micro-lessons/MicroLessonBlock';
+import { AlternativeMethodsAccordion } from '../common/AlternativeMethodsAccordion';
 import { Viewer3D } from '../Viewer3D';
 import { enhanceTranscriptionMathForLatex } from '../../utils/stemTranscriptionMath';
 import type { GeometryJSON } from '@/src/types/geometry';
@@ -250,7 +257,36 @@ function buildCeecExampleFormatHint(sub: StemSubScore, fullCalcHint?: boolean): 
   return parts.join('\n\n').trim();
 }
 
-/** 模型常把一題多解打成單一字串、物件或混雜型別；統一成可渲染字串陣列 */
+/** 與 VisualizationRenderer 說明區相同：讓單一 \\n 在下游 Markdown 路徑保留為換行 */
+function altSolutionsHardBreaks(text: string): string {
+  if (typeof text !== 'string' || !text.includes('\n')) return text;
+  return text.split('\n').join('  \n');
+}
+
+function normalizeAlternativeMethods(raw: unknown): AlternativeMethod[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AlternativeMethod[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== 'object' || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const method_name = typeof o.method_name === 'string' ? o.method_name.trim() : '';
+    const description = typeof o.description === 'string' ? o.description.trim() : '';
+    const steps = Array.isArray(o.steps)
+      ? o.steps
+          .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+          .map((s) => s.trim())
+      : [];
+    if (!method_name && !description && steps.length === 0) continue;
+    out.push({
+      method_name: method_name || `方法 ${out.length + 1}`,
+      description,
+      steps,
+    });
+  }
+  return out;
+}
+
+/** 模型常把一題多解打成單一字串、物件或混雜型別；統一成可渲染字串陣列（結構化物件每解法一條，禁止 Object.values 合併污染） */
 function normalizeAlternativeSolutions(raw: unknown): string[] {
   if (raw == null) return [];
   if (typeof raw === 'string') {
@@ -263,10 +299,25 @@ function normalizeAlternativeSolutions(raw: unknown): string[] {
       if (typeof item === 'string' && item.trim()) {
         out.push(item.trim());
       } else if (item != null && typeof item === 'object' && !Array.isArray(item)) {
-        const vals = Object.values(item as Record<string, unknown>).filter(
-          (v) => typeof v === 'string' && (v as string).trim().length > 0,
-        ) as string[];
-        if (vals.length) out.push(vals.join('\n\n'));
+        const o = item as Record<string, unknown>;
+        const hasStructured =
+          typeof o.method_name === 'string' ||
+          typeof o.description === 'string' ||
+          Array.isArray(o.steps);
+        if (hasStructured) {
+          const name = typeof o.method_name === 'string' ? o.method_name.trim() : '';
+          const desc = typeof o.description === 'string' ? o.description.trim() : '';
+          const stepStrs = Array.isArray(o.steps)
+            ? o.steps
+                .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+                .map((s) => s.trim())
+            : [];
+          const body = [desc, ...stepStrs].filter(Boolean).join('\n\n');
+          const block = [name, body].filter(Boolean).join('\n\n');
+          if (block) out.push(block);
+        } else {
+          out.push(JSON.stringify(item));
+        }
       }
     }
     return out;
@@ -279,39 +330,43 @@ function normalizeAlternativeSolutions(raw: unknown): string[] {
   return [];
 }
 
-const renderAlternativeSolutions = (content: any) => {
+const renderAlternativeSolutions = (content: unknown, stemRowKey: string) => {
   if (!content) return null;
-  if (typeof content === 'string') return <LatexRenderer content={content} />;
-  
-  const renderItems = (items: any) => {
+  if (typeof content === 'string') {
+    return <LatexRenderer content={altSolutionsHardBreaks(content)} />;
+  }
+
+  const renderItems = (items: unknown[]) => {
     const list = Array.isArray(items) ? items : [];
     return (
-    <div className="space-y-4">
-      {list.map((item, i) => {
-        let contentToRender = '';
-        if (typeof item === 'string') {
-          contentToRender = item;
-        } else if (Array.isArray(item)) {
-          contentToRender = item.join('\n');
-        } else {
-          contentToRender = JSON.stringify(item);
-        }
+      <div className="space-y-4">
+        {list.map((item, i) => {
+          let contentToRender = '';
+          if (typeof item === 'string') {
+            contentToRender = altSolutionsHardBreaks(item);
+          } else if (Array.isArray(item)) {
+            contentToRender = altSolutionsHardBreaks(item.map(String).join('\n'));
+          } else {
+            contentToRender = JSON.stringify(item);
+          }
 
-        return (
-          <div key={i} className="border-l-2 border-emerald-500/30 pl-4 py-1">
-             <div className="text-[10px] font-black text-emerald-500 dark:text-emerald-400 mb-2 tracking-widest uppercase opacity-70">Method {i+1}</div>
-             <LatexRenderer content={contentToRender} />
-          </div>
-        );
-      })}
-    </div>
+          return (
+            <div key={`${stemRowKey}-alt-legacy-${i}`} className="border-l-2 border-emerald-500/30 pl-4 py-1">
+              <div className="text-[10px] font-black text-emerald-500 dark:text-emerald-400 mb-2 tracking-widest uppercase opacity-70">
+                Method {i + 1}
+              </div>
+              <LatexRenderer content={contentToRender} />
+            </div>
+          );
+        })}
+      </div>
     );
   };
 
   if (Array.isArray(content)) return renderItems(content);
-  if (typeof content === 'object') return renderItems(Object.values(content));
-  
-  return <LatexRenderer content={String(content)} />;
+  if (typeof content === 'object') return renderItems(Object.values(content as Record<string, unknown>));
+
+  return <LatexRenderer content={altSolutionsHardBreaks(String(content))} />;
 };
 
 const ScoreMetric: React.FC<{ label: string; score: number; color: string }> = ({ label, score, color }) => {
@@ -532,6 +587,7 @@ const AstMathAStrategy: React.FC<Props> = ({
               </div>
 
               {(() => {
+                const structuredMethods = normalizeAlternativeMethods(sub.alternative_methods);
                 const altList = normalizeAlternativeSolutions(sub.alternative_solutions);
                 // #region agent log
                 if (idx === 0) {
@@ -551,6 +607,7 @@ const AstMathAStrategy: React.FC<Props> = ({
                               ? 'array'
                               : typeof sub.alternative_solutions,
                         normalizedCount: altList.length,
+                        structuredMethodsCount: structuredMethods.length,
                         isAstMathA,
                       },
                       timestamp: Date.now(),
@@ -559,7 +616,7 @@ const AstMathAStrategy: React.FC<Props> = ({
                   }).catch(() => {});
                 }
                 // #endregion
-                if (altList.length === 0) return null;
+                if (structuredMethods.length === 0 && altList.length === 0) return null;
                 return (
                   <div className="mt-8 p-6 bg-emerald-500/5 rounded-[2rem] border border-emerald-500/20 relative z-10 w-full min-w-0">
                     <h5 className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-4 flex items-center gap-2">
@@ -567,7 +624,11 @@ const AstMathAStrategy: React.FC<Props> = ({
                       一題多解 (Alternative Approach)
                     </h5>
                     <div className="text-[var(--text-primary)] text-sm leading-relaxed min-w-0">
-                      {renderAlternativeSolutions(altList)}
+                      {structuredMethods.length > 0 ? (
+                        <AlternativeMethodsAccordion methods={structuredMethods} keyPrefix={stemRowKey} />
+                      ) : (
+                        renderAlternativeSolutions(altList, stemRowKey)
+                      )}
                     </div>
                   </div>
                 );
@@ -608,8 +669,9 @@ const AstMathAStrategy: React.FC<Props> = ({
                     type: 'geometry_json',
                     code: prefetchedQuestionGeometry,
                   });
-                /** 題幹預抓幾何：每個子列皆可作後備；標題／說明綁定本子題 sub_id／index */
-                const prefetchFallbackThisSub = prefetchOk;
+                /** 題幹預抓幾何：多列題組僅第一列後備，避免每小題重複同一張母題圖 */
+                const prefetchFallbackThisSub =
+                  prefetchOk && (rows.length <= 1 || idx === 0);
 
                 let visualizationContent: typeof rawVc | {
                   explanation: string;
@@ -788,7 +850,9 @@ const AstMathAStrategy: React.FC<Props> = ({
                        content={vc}
                        prefetchedGeometryJson={prefetchedQuestionGeometry}
                        onRetryExtraction={onRetryQuestionGeometryExtraction}
-                       allowPrefetchedGeometryFallback={stemSubjectBase === 'math'}
+                       allowPrefetchedGeometryFallback={
+                         stemSubjectBase === 'math' && (rows.length <= 1 || idx === 0)
+                       }
                        prefetchedGeometryVizTitle={
                          stemSubjectBase === 'math'
                            ? `題目圖形（${sub.sub_id?.trim() || `第 ${idx + 1} 小題`}）`
