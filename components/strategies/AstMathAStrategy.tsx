@@ -728,6 +728,31 @@ const AstMathAStrategy: React.FC<Props> = ({
                         if (typeof o.mol === 'string' && o.mol.trim()) return true;
                         return false;
                       })());
+                // #region agent log
+                if (chem && idx === 0) {
+                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1e3c30' },
+                    body: JSON.stringify({
+                      sessionId: '1e3c30',
+                      runId: 'post-fix',
+                      hypothesisId: 'H3',
+                      location: 'AstMathAStrategy.tsx:chemistryVizBranch',
+                      message: 'chemistry visualization branch',
+                      data: {
+                        rootMol3dOk,
+                        stemSubjectBase,
+                        vcType: vc == null ? 'null' : typeof vc,
+                        hasVisualizationsKey:
+                          vc != null &&
+                          typeof vc === 'object' &&
+                          Array.isArray((vc as { visualizations?: unknown }).visualizations),
+                      },
+                      timestamp: Date.now(),
+                    }),
+                  }).catch(() => {});
+                }
+                // #endregion
                 return rootMol3dOk ? (
                    <div className="mt-8 relative z-10 bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
                      <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">

@@ -181,57 +181,45 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
         };
 
         if (cid) {
-          fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`)
-            .then(res => {
+          const pubchemSdf = (url: string, logLocation: string) =>
+            fetch(url).then((res) => {
               // #region agent log
               fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '95c4aa' },
                 body: JSON.stringify({
                   sessionId: '95c4aa',
-                  location: 'Viewer3D.tsx:pubchem3d',
-                  message: 'PubChem 3D SDF response',
+                  location: logLocation,
+                  message: 'PubChem SDF response',
                   data: { hypothesisId: 'H2', cid: String(cid), httpStatus: res.status, ok: res.ok },
                   timestamp: Date.now(),
                   runId: 'post-fix',
                 }),
               }).catch(() => {});
               // #endregion
-              if (!res.ok) throw new Error(`3D SDF: HTTP ${res.status}`);
+              if (!res.ok) throw new Error(`SDF: HTTP ${res.status}`);
               return res.text();
-            })
-            .then(sdf => {
-              if (!isMounted) return;
-              viewer.addModel(sdf, 'sdf');
-              applyStyle();
-            })
-            .catch(() => {
-              // 許多 CID 無 3D 構型，PubChem 回 404 屬正常，不刷 console.warn
-              fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF`)
-                .then(res => {
-                  // #region agent log
-                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '95c4aa' },
-                    body: JSON.stringify({
-                      sessionId: '95c4aa',
-                      location: 'Viewer3D.tsx:pubchem2d',
-                      message: 'PubChem 2D SDF response',
-                      data: { hypothesisId: 'H2', cid: String(cid), httpStatus: res.status, ok: res.ok },
-                      timestamp: Date.now(),
-                      runId: 'post-fix',
-                    }),
-                  }).catch(() => {});
-                  // #endregion
-                  if (!res.ok) throw new Error(`2D SDF: HTTP ${res.status}`);
-                  return res.text();
-                })
-                .then(sdf => {
-                  if (!isMounted) return;
-                  viewer.addModel(sdf, 'sdf');
-                  applyStyle();
-                })
-                .catch(err2d => {
+            });
+
+          const applySdf = (sdf: string) => {
+            if (!isMounted) return;
+            viewer.addModel(sdf, 'sdf');
+            applyStyle();
+          };
+
+          /** 先取預設 SDF（多數化合物有），避免對無 3D 構型的 CID 先打 record_type=3d 而固定出現 404 */
+          pubchemSdf(
+            `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF`,
+            'Viewer3D.tsx:pubchemDefaultSdf',
+          )
+            .then(applySdf)
+            .catch(() =>
+              pubchemSdf(
+                `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`,
+                'Viewer3D.tsx:pubchem3dSdf',
+              )
+                .then(applySdf)
+                .catch((err2d) => {
                   console.warn(`[Viewer3D] SDF 載入失敗 (CID ${cid})，改顯示 2D 圖`, err2d);
                   if (!isMounted) return;
                   if (fallbackImageUrl) {
@@ -240,8 +228,8 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
                     setStatus('error');
                     setErrorMsg(`無法載入分子結構 (CID: ${cid})`);
                   }
-                });
-            });
+                }),
+            );
         } else if (pdb) {
           try { viewer.addModel(pdb, 'pdb'); applyStyle(); } 
           catch (e) { setStatus('error'); setErrorMsg('PDB 資料格式錯誤'); }

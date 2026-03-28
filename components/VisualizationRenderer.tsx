@@ -260,14 +260,18 @@ function visualizationPayloadHasGeometryJson(payload: VisualizationPayload | nul
 }
 
 function isNonSvgGeometryVizType(t: string | undefined): boolean {
-  return t === 'python_script' || t === 'image_description' || t === 'matplotlib';
+  /** python_script 為合法備援圖示，不應與 geometry_json 並列時被當成「錯誤幾何」攔截 */
+  return t === 'image_description' || t === 'matplotlib';
 }
 
 function shouldStrictInterceptGeometryViz(
   payload: VisualizationPayload | null | undefined,
   onRetryExtraction?: (() => void) | undefined,
+  allowPrefetchedGeometryFallback?: boolean,
 ): boolean {
-  return typeof onRetryExtraction === 'function' || visualizationPayloadHasGeometryJson(payload);
+  if (visualizationPayloadHasGeometryJson(payload)) return true;
+  /** 僅數學門啟用題目圖幾何後備；化學等科仍傳 onRetry 但不應攔截合法的 python_script／plotly 等 */
+  return !!allowPrefetchedGeometryFallback && typeof onRetryExtraction === 'function';
 }
 
 type VizPrefetchGateOpts = {
@@ -747,6 +751,10 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
     });
 
     const { traces: tracesForPlot, droppedBadScatter3d } = filterBrokenScatter3dTraces(tracesCoerced);
+    /** 2D 滴定／函數圖用 scattergl 易與 3Dmol 等 WebGL 上下文衝突，且在容器 0×0 首幀會刷 GL_INVALID_FRAMEBUFFER_OPERATION */
+    const tracesForPlot2d = tracesForPlot.map((t: any) =>
+      t?.type === 'scattergl' ? { ...t, type: 'scatter' } : t,
+    );
     if (droppedBadScatter3d) {
       setPlotlyWebGlNote(
         '3D 座標資料不完整（例如缺少 z 或 x/y/z 長度不符），已略過無效的 scatter3d。若批改曾改以 Flash 模型，視覺化可能較不完整，可再試一次批改。',
@@ -768,7 +776,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       }
       // #endregion
     }
-    if (!tracesForPlot || tracesForPlot.length === 0) return;
+    if (!tracesForPlot2d || tracesForPlot2d.length === 0) return;
 
     const isDark = document.documentElement.classList.contains('dark');
     
@@ -834,7 +842,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       return true;
     };
 
-    const enhancedData = tracesForPlot.map((trace: any, index: number) => {
+    const enhancedData = tracesForPlot2d.map((trace: any, index: number) => {
         const newTrace = { ...trace };
         const defaultColor = geoGebraColors[index % geoGebraColors.length];
 
@@ -934,7 +942,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
     const mergedLayout = { ...defaultLayout, ...layout };
 
     const allTraces3D =
-      tracesForPlot.length > 0 && tracesForPlot.every((t: any) => traceIsPlotly3D(t));
+      tracesForPlot2d.length > 0 && tracesForPlot2d.every((t: any) => traceIsPlotly3D(t));
     if (allTraces3D) {
       delete (mergedLayout as any).xaxis;
       delete (mergedLayout as any).yaxis;
@@ -991,7 +999,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
 
     // #region agent log
     if (typeof fetch !== 'undefined') {
-      const t0 = tracesForPlot[0];
+      const t0 = tracesForPlot2d[0];
       const ys = t0?.y;
       const yArr = Array.isArray(ys) ? ys.map(Number).filter((n) => !Number.isNaN(n)) : [];
       const zs = t0?.z;
@@ -1029,9 +1037,33 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
         modeBarButtonsToRemove: ['lasso2d', 'select2d']
     };
 
-    try {
-        Plotly.newPlot(chartId.current, enhancedData, mergedLayout, config);
-    } catch (e) {
+    const el = document.getElementById(chartId.current);
+    let cancelled = false;
+    let resizeRo: ResizeObserver | null = null;
+
+    const relayout = () => {
+      try {
+        if (!cancelled && el) Plotly.Plots.resize(el);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const runNewPlot = () => {
+      if (cancelled || !el) return;
+      if (el.clientWidth < 2 || el.clientHeight < 2) return;
+      try {
+        Plotly.newPlot(el, enhancedData, mergedLayout, config);
+        requestAnimationFrame(() => {
+          if (!cancelled && el) {
+            try {
+              Plotly.Plots.resize(el);
+            } catch {
+              /* ignore */
+            }
+          }
+        });
+      } catch (e) {
         console.error("Plotly Render Error:", e);
         // #region agent log
         if (typeof fetch !== 'undefined') {
@@ -1049,29 +1081,41 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
           }).catch(() => {});
         }
         // #endregion
-    }
-
-    const el = document.getElementById(chartId.current);
-    const relayout = () => {
-      try {
-        if (el) Plotly.Plots.resize(el);
-      } catch {
-        /* ignore */
       }
     };
-    const ro =
-      el &&
-      new ResizeObserver(() => {
-        requestAnimationFrame(relayout);
+
+    /** 雙 rAF：等 flex/摺疊版面把 min-height 算進佈局後再畫，避免 WebGL 0×0 framebuffer */
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        runNewPlot();
       });
-    if (el && ro) ro.observe(el);
+    });
+
+    if (el) {
+      resizeRo = new ResizeObserver(() => {
+        requestAnimationFrame(() => {
+          if (cancelled || !el) return;
+          if (el.clientWidth < 2 || el.clientHeight < 2) return;
+          const gd = el as unknown as { data?: unknown };
+          const hasPlot = gd.data != null && Array.isArray(gd.data);
+          if (hasPlot) {
+            relayout();
+          } else {
+            runNewPlot();
+          }
+        });
+      });
+      resizeRo.observe(el);
+    }
     window.addEventListener('resize', relayout);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('resize', relayout);
-      ro?.disconnect();
+      resizeRo?.disconnect();
       try {
-        Plotly.purge(chartId.current);
+        if (el) Plotly.purge(el);
+        else Plotly.purge(chartId.current);
       } catch {
         /* ignore */
       }
@@ -1084,6 +1128,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
         id={chartId.current}
         data-asea-will-read-frequently
         className="w-full h-full min-h-[300px] sm:min-h-[360px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-[var(--bg-main)] shadow-inner"
+        style={{ minHeight: 320 }}
       />
       {plotlyWebGlNote ? (
         <p className="text-xs text-amber-700 dark:text-amber-300 px-1">{plotlyWebGlNote}</p>
@@ -1951,7 +1996,11 @@ export const VisualizationRenderer: React.FC<{
               );
             }
             if (
-              shouldStrictInterceptGeometryViz(vizPayload, onRetryExtraction) &&
+              shouldStrictInterceptGeometryViz(
+                vizPayload,
+                onRetryExtraction,
+                allowPrefetchedGeometryFallback,
+              ) &&
               isNonSvgGeometryVizType(viz.type)
             ) {
               console.warn(`[VisualizationRenderer] 攔截到非 SVG 幾何輸出: ${viz.type}`);
@@ -2134,7 +2183,7 @@ export const VisualizationRenderer: React.FC<{
                     </h5>
                   </div>
                   <p className="mb-2 px-1 text-xs text-[var(--text-secondary)] leading-relaxed">
-                    幾何渲染代碼（僅供檢視，不在瀏覽器執行）
+                    Python 腳本（僅供檢視，不在瀏覽器執行）
                   </p>
                   <pre className="max-h-[min(70vh,520px)] overflow-auto rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4 text-left">
                     <code className="whitespace-pre font-mono text-[11px] leading-relaxed text-[var(--text-primary)]">

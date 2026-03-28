@@ -61,9 +61,19 @@ const GEMINI_FLASH_FALLBACK_MODEL = 'gemini-3-flash-preview';
 
 /** 數學甲 Phase 3 含多小題長詳解、一題多解與圖示；16k 易截斷 JSON，畫面只剩前段（約「三分之一」） */
 const AST_MATH_A_PHASE3_SUBJECT_ID = 'ast-math-a';
+/** 分科化學：compounds + 多解 + visualization；實測 finishReason=MAX_TOKENS @16k、stem_sub_results 異常膨脹（見 debug-1e3c30） */
+const AST_CHEMISTRY_PHASE3_SUBJECT_ID = 'ast-chemistry';
+/** 分科生物：與化學同樣套用 compounds schema + 必填 visualization_code／五段式，16k 易截斷致 JSON 不完整 */
+const AST_BIOLOGY_PHASE3_SUBJECT_ID = 'ast-biology';
+
+const STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS = new Set([
+  AST_MATH_A_PHASE3_SUBJECT_ID,
+  AST_CHEMISTRY_PHASE3_SUBJECT_ID,
+  AST_BIOLOGY_PHASE3_SUBJECT_ID,
+]);
 
 function maxOutputTokensForStemPhase3(subjectId?: string): number {
-  return subjectId === AST_MATH_A_PHASE3_SUBJECT_ID ? 65536 : 16384;
+  return subjectId && STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS.has(subjectId) ? 65536 : 16384;
 }
 
 /**
@@ -850,7 +860,7 @@ export async function runModeratorSynthesis(
     responseMimeType: "application/json" as const,
     systemInstruction: buildSystemInstruction(systemInstruction, subjectName),
     temperature: 0.2,
-    /** 化學／物理 compounds + stem_sub_results 體積大；數學甲另見 maxOutputTokensForStemPhase3 */
+    /** 化學／物理 compounds + stem_sub_results 體積大；數學甲與分科化學見 maxOutputTokensForStemPhase3（65536） */
     maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
     ...(COMPOUNDS_SCHEMA_SUBJECTS.some(k => subjectName.includes(k)) && {
       responseSchema: {
@@ -1219,6 +1229,84 @@ export async function runModeratorSynthesis(
     }
     // #endregion
   }
+  // #region agent log
+  {
+    const chemH = /化學|chemistry/i.test(subjectName);
+    if (chemH) {
+      const rt = result?.text ?? '';
+      const cand = (result as { candidates?: { finishReason?: string }[] })?.candidates?.[0];
+      const fr = cand?.finishReason ?? null;
+      const stemN = Array.isArray(parsed?.stem_sub_results) ? parsed.stem_sub_results.length : -1;
+      const maxTok = maxOutputTokensForStemPhase3(subjectId);
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1e3c30' },
+        body: JSON.stringify({
+          sessionId: '1e3c30',
+          runId: 'post-fix',
+          hypothesisId: 'H1',
+          location: 'geminiService.ts:runModeratorSynthesis:chemistryExit',
+          message: 'chemistry phase3 output shape vs token cap',
+          data: {
+            subjectId: subjectId ?? null,
+            maxOutputTokens: maxTok,
+            responseTextLen: rt.length,
+            finishReason: fr,
+            parsedStemSubCount: stemN,
+            hasCompounds: Array.isArray((parsed as { compounds?: unknown })?.compounds),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+  }
+  // #endregion
+  // #region agent log
+  {
+    const bioH = /生物|biology/i.test(subjectName);
+    if (bioH) {
+      const rt = result?.text ?? '';
+      const cand = (result as { candidates?: { finishReason?: string }[] })?.candidates?.[0];
+      const fr = cand?.finishReason ?? null;
+      const stemN = Array.isArray(parsed?.stem_sub_results) ? parsed.stem_sub_results.length : -1;
+      const maxTok = maxOutputTokensForStemPhase3(subjectId);
+      const compoundsOn = COMPOUNDS_SCHEMA_SUBJECTS.some((k) => subjectName.includes(k));
+      const s0 =
+        parsed && Array.isArray(parsed.stem_sub_results) && parsed.stem_sub_results[0]
+          ? (parsed.stem_sub_results[0] as Record<string, unknown>)
+          : null;
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fb2a55' },
+        body: JSON.stringify({
+          sessionId: 'fb2a55',
+          runId: 'post-fix',
+          hypothesisId: 'H1-H5',
+          location: 'geminiService.ts:runModeratorSynthesis:biologyExit',
+          message: 'biology phase3 parse and token shape',
+          data: {
+            subjectId: subjectId ?? null,
+            maxOutputTokens: maxTok,
+            compoundsSchemaOn: compoundsOn,
+            responseTextLen: rt.length,
+            finishReason: fr,
+            parsedIsNull: parsed == null,
+            parsedStemSubCount: stemN,
+            compoundsLen: Array.isArray((parsed as { compounds?: unknown[] })?.compounds)
+              ? (parsed as { compounds: unknown[] }).compounds.length
+              : null,
+            sub0setup: s0?.setup,
+            sub0process: s0?.process,
+            sub0result: s0?.result,
+            sub0logic: s0?.logic,
+            textTail: rt.slice(-140),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+  }
+  // #endregion
   return parsed;
 }
 

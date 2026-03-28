@@ -451,6 +451,28 @@ const ResultsDisplay: React.FC<Props> = ({
         runId: 'post-fix',
       }),
     }).catch(() => {});
+    const isChemDisplay =
+      subjectName.includes('化學') || /chemistry/i.test(subjectName);
+    if (isChemDisplay) {
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1e3c30' },
+        body: JSON.stringify({
+          sessionId: '1e3c30',
+          runId: 'post-fix',
+          hypothesisId: 'H2',
+          location: 'ResultsDisplay.tsx:chemistryStemGate',
+          message: 'chemistry results STEM branch',
+          data: {
+            isStem,
+            stemSubResultsLen,
+            stemBlockWouldRender,
+            phase3Keys: p3 ? Object.keys(p3).slice(0, 20) : [],
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
   }, [
     results,
     subjectName,
