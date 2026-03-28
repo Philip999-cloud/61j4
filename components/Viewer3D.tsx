@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { enqueuePubChemRestRequest } from '../utils/pubChemThrottle';
 
 /** HTML 實體與數字參照解碼，供化合物顯示名／PubChem 查詢前正規化 */
 export function safeDecodeCompoundLabel(input: string): string {
@@ -50,12 +51,21 @@ interface Viewer3DProps {
   pdb?: string;
   mol?: string;
   smiles?: string;
+  /** IUPAC／英文名，PubChem compound/name 查詢（須為可列印 ASCII） */
+  englishName?: string;
   className?: string;
 }
 
 type ViewerStatus = 'loading' | 'ready' | 'image_fallback' | 'error';
 
-export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '' }) => {
+export const Viewer3D: React.FC<Viewer3DProps> = ({
+  cid,
+  pdb,
+  mol,
+  smiles,
+  englishName,
+  className = '',
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
   const [status, setStatus] = useState<ViewerStatus>('loading');
@@ -180,6 +190,12 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
           });
         };
 
+        const applySdf = (sdf: string) => {
+          if (!isMounted) return;
+          viewer.addModel(sdf, 'sdf');
+          applyStyle();
+        };
+
         if (cid) {
           const pubchemSdf = (url: string, logLocation: string) =>
             fetch(url).then((res) => {
@@ -200,12 +216,6 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
               if (!res.ok) throw new Error(`SDF: HTTP ${res.status}`);
               return res.text();
             });
-
-          const applySdf = (sdf: string) => {
-            if (!isMounted) return;
-            viewer.addModel(sdf, 'sdf');
-            applyStyle();
-          };
 
           /** 先取預設 SDF（多數化合物有），避免對無 3D 構型的 CID 先打 record_type=3d 而固定出現 404 */
           pubchemSdf(
@@ -236,6 +246,43 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
         } else if (mol) {
           try { viewer.addModel(mol, 'mol'); applyStyle(); } 
           catch (e) { setStatus('error'); setErrorMsg('MOL 資料格式錯誤'); }
+        } else if (smiles != null && String(smiles).trim()) {
+          const sm = String(smiles).trim();
+          if (compoundLookupStringContainsChinese(sm)) {
+            setStatus('error');
+            setErrorMsg('SMILES 含無法解析的字元');
+            return;
+          }
+          try {
+            viewer.addModel(sm, 'smi');
+            applyStyle();
+          } catch (e) {
+            console.warn('[Viewer3D] SMILES 3Dmol 解析失敗', e);
+            setStatus('error');
+            setErrorMsg('SMILES 無法轉成 3D 結構');
+          }
+        } else if (englishName != null && String(englishName).trim()) {
+          const raw = safeDecodeCompoundLabel(String(englishName)).trim();
+          if (!raw || containsChineseForPubchemBlock(raw) || !isPubchemAsciiNameSafe(raw)) {
+            setStatus('error');
+            setErrorMsg('英文化學名無效或含中文，無法向 PubChem 查詢');
+            return;
+          }
+          enqueuePubChemRestRequest(() =>
+            fetch(
+              `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(raw)}/SDF`
+            ).then((res) => {
+              if (!res.ok) throw new Error(`SDF: HTTP ${res.status}`);
+              return res.text();
+            })
+          )
+            .then(applySdf)
+            .catch((err) => {
+              console.warn('[Viewer3D] PubChem name→SDF 失敗', err);
+              if (!isMounted) return;
+              setStatus('error');
+              setErrorMsg('無法依英文化學名載入結構');
+            });
         } else {
           setStatus('error');
           setErrorMsg('未提供分子資料');
@@ -246,7 +293,7 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({ cid, pdb, mol, className = '
        isMounted = false; 
        clearInterval(interval);
     };
-  }, [cid, pdb, mol]);
+  }, [cid, pdb, mol, smiles, englishName]);
 
   return (
     <div

@@ -15,6 +15,56 @@ function isPolygonVertexId(id: string): boolean {
   return !lower.startsWith('intersection') && !lower.startsWith('center');
 }
 
+function collectPolygonLikeVertices(geo: GeometryJSON): GeometryPoint[] {
+  return geo.vertices.filter((v) => isPolygonVertexId(v.id));
+}
+
+/** 以頂點幾何中心與平均半徑擬合圓（用於平滑顯示） */
+function fitMeanCircleFromPoints(points: Array<{ x: number; y: number }>): {
+  cx: number;
+  cy: number;
+  r: number;
+} {
+  const n = points.length;
+  const cx = points.reduce((s, p) => s + p.x, 0) / n;
+  const cy = points.reduce((s, p) => s + p.y, 0) / n;
+  const r = points.reduce((s, p) => s + Math.hypot(p.x - cx, p.y - cy), 0) / n;
+  return { cx, cy, r: Math.max(r, 1e-6) };
+}
+
+function undirectedEdgeKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** 依圓心角排序後，相鄰頂點之邊為「外廓弦」，改以 SVG circle 呈現時應略過 */
+function buildHullBoundaryEdgeKeys(pts: GeometryPoint[], cx: number, cy: number): Set<string> {
+  const sorted = [...pts].sort(
+    (p, q) => Math.atan2(p.y - cy, p.x - cx) - Math.atan2(q.y - cy, q.x - cx)
+  );
+  const set = new Set<string>();
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i].id;
+    const b = sorted[(i + 1) % sorted.length].id;
+    set.add(undirectedEdgeKey(a, b));
+  }
+  return set;
+}
+
+/**
+ * 邊數 ≥ 9 的正多邊形在題意上常為圓的近似；改以原生 <circle> 繪外廓以免折線失真。
+ * 明確標為 circle 時，若未給 circles 陣列，亦由頂點擬合圓周。
+ */
+function shouldPromoteCircleOutline(geo: GeometryJSON): boolean {
+  if (geo.circles && geo.circles.length > 0) return false;
+  const mid = geo.mid_level;
+  const polyVerts = collectPolygonLikeVertices(geo);
+  if (polyVerts.length < 3) return false;
+  if (geo.shape_type === 'circle' || mid?.primary_shape === 'circle') return true;
+  const n = mid?.polygon_sides ?? 0;
+  if (mid?.is_regular && n >= 9 && polyVerts.length >= 9) return true;
+  return false;
+}
+
 /**
  * Phase 2 前處理：根據三層特徵進行確定性修正（高層語義 → 中層形狀 → 低層驗證）
  */
@@ -29,7 +79,15 @@ function applyThreeLayerCorrections(geo: GeometryJSON): GeometryJSON {
   }
 
   const mid = geo.mid_level;
-  if (mid?.is_regular && mid.polygon_sides != null) {
+  // 圓／橢圓語意：勿將頂點強制成正 n 邊形（否則會出現低邊數「假圓」折線）
+  if (
+    mid?.is_regular &&
+    mid.polygon_sides != null &&
+    geo.shape_type !== 'circle' &&
+    mid.primary_shape !== 'circle' &&
+    mid.primary_shape !== 'ellipse' &&
+    geo.shape_type !== 'ellipse'
+  ) {
     const n = mid.polygon_sides;
     const validVertices = result.vertices.filter((v) => isPolygonVertexId(v.id));
     if (validVertices.length === n) {
@@ -72,11 +130,36 @@ export function geometryJsonToSvg(geoRaw: GeometryJSON): string {
   const { canvas_width: W, canvas_height: H } = geo;
   const pointMap = buildPointMap(geo);
 
+  const polyVerts = collectPolygonLikeVertices(geo);
+  const promoteOutline = shouldPromoteCircleOutline(geo);
+  const circlesRender = [...(geo.circles ?? [])];
+  let hullBoundarySkip = new Set<string>();
+  if (promoteOutline && polyVerts.length >= 3) {
+    let { cx, cy, r } = fitMeanCircleFromPoints(polyVerts);
+    const tol = Math.max(0.1 * r, 3);
+    const onCircumference = polyVerts.filter(
+      (v) => Math.abs(Math.hypot(v.x - cx, v.y - cy) - r) < tol
+    );
+    let hullPts = polyVerts;
+    if (onCircumference.length >= 6 && onCircumference.length < polyVerts.length) {
+      hullPts = onCircumference;
+      ({ cx, cy, r } = fitMeanCircleFromPoints(onCircumference));
+    }
+    circlesRender.push({
+      id: '__smooth_circle_outline',
+      cx,
+      cy,
+      r,
+      style: 'solid',
+    });
+    hullBoundarySkip = buildHullBoundaryEdgeKeys(hullPts, cx, cy);
+  }
+
   const parts: string[] = [];
 
   // 1. SVG 開頭
   parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;display:block;margin:0 auto">`
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="max-width:${W}px;height:auto;display:block;margin:0 auto">`
   );
 
   // 2. 座標軸（如果有）
@@ -91,15 +174,13 @@ export function geometryJsonToSvg(geoRaw: GeometryJSON): string {
     }
   }
 
-  // 4. 圓形
-  if (geo.circles) {
-    for (const circle of geo.circles) {
-      const dashArray = circle.style === 'dashed' ? 'stroke-dasharray="6 3"' : '';
-      parts.push(
-        `<circle cx="${fmt(circle.cx)}" cy="${fmt(circle.cy)}" r="${fmt(circle.r)}" ` +
-          `fill="none" stroke="${DEFAULT_STROKE}" stroke-width="${DEFAULT_STROKE_WIDTH}" ${dashArray}/>`
-      );
-    }
+  // 4. 圓形（含將高邊數「近似圓」外廓改為平滑圓周）
+  for (const circle of circlesRender) {
+    const dashArray = circle.style === 'dashed' ? 'stroke-dasharray="6 3"' : '';
+    parts.push(
+      `<circle cx="${fmt(circle.cx)}" cy="${fmt(circle.cy)}" r="${fmt(circle.r)}" ` +
+        `fill="none" stroke="${DEFAULT_STROKE}" stroke-width="${DEFAULT_STROKE_WIDTH}" ${dashArray}/>`
+    );
   }
 
   // 4b. 圓弧（半圓端、扇形邊界等）
@@ -109,8 +190,11 @@ export function geometryJsonToSvg(geoRaw: GeometryJSON): string {
     }
   }
 
-  // 5. 邊/線段
+  // 5. 邊/線段（平滑圓外廓時略過外圈折線弦，保留對角線、切線等）
   for (const edge of geo.edges) {
+    if (hullBoundarySkip.size > 0 && hullBoundarySkip.has(undirectedEdgeKey(edge.from, edge.to))) {
+      continue;
+    }
     const p1 = pointMap.get(edge.from);
     const p2 = pointMap.get(edge.to);
     if (!p1 || !p2) continue;

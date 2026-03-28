@@ -734,6 +734,9 @@ const AstMathAStrategy: React.FC<Props> = ({
                         if (typeof o.smiles === 'string' && o.smiles.trim()) return true;
                         if (typeof o.pdb === 'string' && o.pdb.trim()) return true;
                         if (typeof o.mol === 'string' && o.mol.trim()) return true;
+                        const en =
+                          typeof o.english_name === 'string' ? o.english_name.trim() : '';
+                        if (en && /^[\x20-\x7E]+$/.test(en)) return true;
                         return false;
                       })());
                 // #region agent log
@@ -772,6 +775,11 @@ const AstMathAStrategy: React.FC<Props> = ({
                        smiles={typeof vc === 'object' && vc ? (vc as { smiles?: string }).smiles : undefined}
                        pdb={typeof vc === 'object' && vc ? (vc as { pdb?: string }).pdb : undefined}
                        mol={typeof vc === 'object' && vc ? (vc as { mol?: string }).mol : undefined}
+                       englishName={
+                         typeof vc === 'object' && vc
+                           ? (vc as { english_name?: string }).english_name
+                           : undefined
+                       }
                      />
                    </div>
                  ) : (

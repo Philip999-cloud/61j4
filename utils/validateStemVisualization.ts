@@ -100,7 +100,14 @@ function mol3dLoadable(v: Record<string, unknown>): boolean {
   if (typeof v.smiles === 'string' && v.smiles.trim().length > 0) return true;
   if (typeof v.pdb === 'string' && v.pdb.trim().length > 0) return true;
   if (typeof v.mol === 'string' && v.mol.trim().length > 0) return true;
+  const en = typeof v.english_name === 'string' ? v.english_name.trim() : '';
+  if (en && /^[\x20-\x7E]+$/.test(en)) return true;
   return false;
+}
+
+/** 供 VisualizationRenderer 等與 filter 邏輯一致判斷 mol3d 是否可掛載 */
+export function visualizationMol3dLoadable(v: Record<string, unknown>): boolean {
+  return mol3dLoadable(v);
 }
 
 export interface VizValidationResult {

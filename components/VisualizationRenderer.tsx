@@ -66,6 +66,7 @@ import {
   filterRenderableVisualizations,
   geometryJsonItemRenderable,
   plotlyDataLooksRenderable,
+  visualizationMol3dLoadable,
 } from '../utils/validateStemVisualization';
 
 function isChemStoichiometryBlock(text: string): boolean {
@@ -362,6 +363,9 @@ function isVizRendererContentRenderable(
       if (item.type === 'physics_wave_interference' || item.type === 'physics_snell_diagram') {
         return true;
       }
+      if (item.type === 'mol3d') {
+        return visualizationMol3dLoadable(item as Record<string, unknown>);
+      }
       return true;
     });
     if (anyDisplayable) return true;
@@ -516,6 +520,9 @@ function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, comp
       if (item.type === 'physics_wave_interference' || item.type === 'physics_snell_diagram') {
         return true;
       }
+      if (item.type === 'mol3d') {
+        return visualizationMol3dLoadable(item as Record<string, unknown>);
+      }
       return true;
     });
     if (anyDisplayable) return true;
@@ -525,14 +532,10 @@ function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, comp
   return false;
 }
 
-/** mol3d 區塊僅在具備 PubChem／結構資料時可交給 Viewer3D，避免模型只回 type 與空 x/y 時整段報錯 */
+/** mol3d 區塊僅在具備 PubChem／SMILES／結構資料時可交給 Viewer3D */
 function mol3dVizHasLoadableStructure(viz: VisualizationItem | null | undefined): boolean {
-  if (!viz) return false;
-  if (viz.cid != null && String(viz.cid).trim() !== '') return true;
-  if (typeof viz.smiles === 'string' && viz.smiles.trim().length > 0) return true;
-  if (typeof viz.pdb === 'string' && viz.pdb.trim().length > 0) return true;
-  if (typeof viz.mol === 'string' && viz.mol.trim().length > 0) return true;
-  return false;
+  if (!viz || typeof viz !== 'object') return false;
+  return visualizationMol3dLoadable(viz as unknown as Record<string, unknown>);
 }
 
 function isParsedPayloadDisplayable(
@@ -2025,15 +2028,15 @@ export const VisualizationRenderer: React.FC<{
               );
               if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-visible group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full items-stretch justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60"
+                    className="flex min-h-[240px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto overflow-y-visible max-w-full relative border border-[var(--border-color)]/60"
                     style={{ minHeight: '200px' }}
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full flex-1 min-h-[200px]" />
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-0 py-2" />
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2092,7 +2095,7 @@ export const VisualizationRenderer: React.FC<{
               }
               if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-visible group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
@@ -2100,10 +2103,10 @@ export const VisualizationRenderer: React.FC<{
                     </h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full items-stretch justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto max-w-full relative border border-[var(--border-color)]/60"
+                    className="flex min-h-[240px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto overflow-y-visible max-w-full relative border border-[var(--border-color)]/60"
                     style={{ minHeight: '200px' }}
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full flex-1 min-h-[200px]" />
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-0 py-2" />
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2136,7 +2139,13 @@ export const VisualizationRenderer: React.FC<{
                          <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{viz.title || '3D Molecular Model'}</h5>
                       </div>
                       <div className="rounded-xl overflow-hidden border border-[var(--border-color)]/60 bg-[var(--bg-main)]">
-                        <Viewer3D cid={viz.cid} smiles={viz.smiles} pdb={viz.pdb} mol={viz.mol} />
+                        <Viewer3D
+                          cid={viz.cid}
+                          smiles={viz.smiles}
+                          pdb={viz.pdb}
+                          mol={viz.mol}
+                          englishName={(viz as { english_name?: string }).english_name}
+                        />
                       </div>
                       {viz.caption && (
                         <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2227,17 +2236,14 @@ export const VisualizationRenderer: React.FC<{
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                      {viz.title || 'Python script'}
+                      {viz.title || '圖示無法即時繪製'}
                     </h5>
                   </div>
-                  <p className="mb-2 px-1 text-xs text-[var(--text-secondary)] leading-relaxed">
-                    Python 腳本（僅供檢視，不在瀏覽器執行）
+                  <p className="px-1 text-sm text-[var(--text-secondary)] leading-relaxed">
+                    此輸出為 Python 腳本，無法在瀏覽器內執行以產生圖形。請改以可渲染格式產出圖示，例如{' '}
+                    <span className="font-mono text-xs">plotly_chart</span>（含資料與 layout）或{' '}
+                    <span className="font-mono text-xs">python_plot</span>（含 func_str 與座標範圍，由系統轉成向量圖）。
                   </p>
-                  <pre className="max-h-[min(70vh,520px)] overflow-auto rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)] p-4 text-left">
-                    <code className="whitespace-pre font-mono text-[11px] leading-relaxed text-[var(--text-primary)]">
-                      {viz.code.trim()}
-                    </code>
-                  </pre>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
                       <p className="text-[var(--text-secondary)] text-xs text-center font-medium leading-relaxed">

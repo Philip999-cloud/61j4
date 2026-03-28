@@ -195,10 +195,11 @@ function normalizeSvgResponsive(svg: SVGSVGElement) {
     svg.setAttribute('viewBox', '0 0 400 300');
   }
   svg.setAttribute('width', '100%');
-  svg.setAttribute('height', '100%');
+  svg.removeAttribute('height');
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   svg.style.width = '100%';
-  svg.style.height = '100%';
+  /** 勿用 height:100%：flex 父層高度未定時會錯算，圖形常被裁成「只見一角／約 1/4」 */
+  svg.style.height = 'auto';
   svg.style.maxWidth = '100%';
   svg.style.display = 'block';
   svg.style.overflow = 'visible';
@@ -329,8 +330,9 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({
 
       fo.setAttribute('x', textNode.getAttribute('x') ?? '0');
       fo.setAttribute('y', textNode.getAttribute('y') ?? '0');
-      fo.setAttribute('width', '1');
-      fo.setAttribute('height', '1');
+      /** 1×1 foreignObject 在 WebKit 等環境易誤裁切整張 SVG；給足版面仍靠 overflow:visible 外溢 */
+      fo.setAttribute('width', '384');
+      fo.setAttribute('height', '120');
       fo.setAttribute('overflow', 'visible');
       fo.style.overflow = 'visible';
       fo.style.pointerEvents = 'none';
@@ -424,7 +426,7 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`physics-renderer-root smart-svg-root isolate w-full max-w-full h-full min-h-[inherit] overflow-x-auto [&_svg]:max-w-none ${preserveDiagramColors ? '' : 'text-[var(--text-primary)]'} ${className}`}
+      className={`physics-renderer-root smart-svg-root isolate w-full max-w-full min-h-0 overflow-x-auto overflow-y-visible [&_svg]:max-w-none ${preserveDiagramColors ? '' : 'text-[var(--text-primary)]'} ${className}`}
       dangerouslySetInnerHTML={{ __html: safeSvgCode }}
     />
   );
