@@ -279,6 +279,14 @@ type VizPrefetchGateOpts = {
   prefetchedGeometryJson?: GeometryJSON | null;
 };
 
+/** 模型偶將 SVG 包在 markdown fence；供 svg_diagram 檢查與進 SmartSvg 前剝除 */
+function normalizeSvgDiagramMarkup(raw: string | null | undefined): string {
+  let s = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+  if (!s) return '';
+  s = s.replace(/^```(?:svg|html|xml)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  return s;
+}
+
 /**
  * [VizRenderer] 傳入 content 防呆：空值、空物件、無 visualizations（且無其他可渲染根層欄位）→ 不掛載區塊
  */
@@ -299,9 +307,11 @@ function isVizRendererContentRenderable(
     const anyDisplayable = v.some((item: any) => {
       if (!item || typeof item !== 'object') return false;
       if (item.type === 'svg_diagram') {
-        const s =
+        const s = normalizeSvgDiagramMarkup(
           (typeof item.svgCode === 'string' && item.svgCode.trim()) ||
-          (typeof item.code === 'string' && item.code.trim());
+            (typeof item.code === 'string' && item.code.trim()) ||
+            '',
+        );
         return !!s;
       }
       if (item.type === 'geometry_json') {
@@ -391,13 +401,13 @@ function isVizRendererContentRenderable(
   ) {
     return true;
   }
-  if (
-    content.type === 'svg_diagram' &&
-    typeof content.code === 'string' &&
-    content.code.trim().length > 0 &&
-    !((typeof content.svgCode === 'string' && content.svgCode.trim()))
-  ) {
-    return true;
+  if (content.type === 'svg_diagram') {
+    const s = normalizeSvgDiagramMarkup(
+      (typeof content.svgCode === 'string' && content.svgCode.trim()) ||
+        (typeof content.code === 'string' && content.code.trim()) ||
+        '',
+    );
+    return !!s;
   }
   if (
     content.type === 'physics_collision' &&
@@ -451,9 +461,11 @@ function isParsedVisualizationPayloadRenderable(data: VisualizationPayload, comp
     const anyDisplayable = v.some((item: any) => {
       if (!item || typeof item !== 'object') return false;
       if (item.type === 'svg_diagram') {
-        const s =
+        const s = normalizeSvgDiagramMarkup(
           (typeof item.svgCode === 'string' && item.svgCode.trim()) ||
-          (typeof item.code === 'string' && item.code.trim());
+            (typeof item.code === 'string' && item.code.trim()) ||
+            '',
+        );
         return !!s;
       }
       if (item.type === 'geometry_json') {
@@ -1237,7 +1249,17 @@ function parseGeometryJsonFromViz(
         .replace(/^```\s*/i, '')
         .replace(/\s*```$/i, '')
         .trim();
-      const parsed = JSON.parse(cleaned) as unknown;
+      let parsed = JSON.parse(cleaned) as unknown;
+      if (typeof parsed === 'string') {
+        const inner = parsed.trim();
+        if (inner.startsWith('{')) {
+          try {
+            parsed = JSON.parse(inner) as unknown;
+          } catch {
+            /* keep outer string */
+          }
+        }
+      }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         const o = parsed as Record<string, unknown>;
         if (isRegularPolygonSolverPayload(o)) {
@@ -1252,6 +1274,12 @@ function parseGeometryJsonFromViz(
   return prefetched ?? null;
 }
 
+/** ReactMarkdown 會吃掉單一 \\n；轉成 Markdown 硬換行以保留圖示說明多行排版 */
+function vizExplanationMarkdownHardBreaks(text: string): string {
+  if (typeof text !== 'string' || !text.includes('\n')) return text;
+  return text.split('\n').join('  \n');
+}
+
 export const VisualizationRenderer: React.FC<{
   content: any;
   compounds?: Compound[];
@@ -1263,12 +1291,15 @@ export const VisualizationRenderer: React.FC<{
    * 數學門專用：模型 visualizations 全數被過濾掉時，仍可用 prefetchedGeometryJson 畫題目圖。
    */
   allowPrefetchedGeometryFallback?: boolean;
+  /** 題幹預抓後備圖在 UI 上的標題（例：綁定子題編號）；預設「題目圖形」 */
+  prefetchedGeometryVizTitle?: string;
 }> = ({
   content,
   compounds: compoundsProp,
   prefetchedGeometryJson,
   onRetryExtraction,
   allowPrefetchedGeometryFallback = false,
+  prefetchedGeometryVizTitle,
 }) => {
   const [parsedData, setParsedData] = useState<VisualizationPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1283,6 +1314,8 @@ export const VisualizationRenderer: React.FC<{
     [allowPrefetchedGeometryFallback, prefetchedGeometryJson],
   );
 
+  const prefetchedVizTitle = prefetchedGeometryVizTitle?.trim() || '題目圖形';
+
   const displayVisualizations = useMemo((): VisualizationItem[] => {
     const base = filterRenderableVisualizations(vizPayload?.visualizations) as VisualizationItem[];
     if (base.length > 0) return base;
@@ -1294,13 +1327,18 @@ export const VisualizationRenderer: React.FC<{
       return [
         {
           type: 'geometry_json',
-          title: '題目圖形',
+          title: prefetchedVizTitle,
           code: prefetchedGeometryJson as unknown as string,
         } as VisualizationItem,
       ];
     }
     return base;
-  }, [vizPayload?.visualizations, allowPrefetchedGeometryFallback, prefetchedGeometryJson]);
+  }, [
+    vizPayload?.visualizations,
+    allowPrefetchedGeometryFallback,
+    prefetchedGeometryJson,
+    prefetchedVizTitle,
+  ]);
 
   useEffect(() => {
     if (!isVizRendererContentRenderable(content, compoundsProp, prefetchGateOpts)) {
@@ -1611,7 +1649,16 @@ export const VisualizationRenderer: React.FC<{
         <div className="rounded-xl bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/20 pl-4 pr-3 py-3">
            <h5 className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-1">Visual Reasoning</h5>
            <div className="text-[var(--text-primary)] text-sm leading-relaxed whitespace-pre-wrap font-medium">
-             <SmartChart data={{ type: 'text_only', chartType: 'line', title: '', data: [], explanation: vizPayload.explanation }} renderExplanationOnly={true} />
+             <SmartChart
+               data={{
+                 type: 'text_only',
+                 chartType: 'line',
+                 title: '',
+                 data: [],
+                 explanation: vizExplanationMarkdownHardBreaks(vizPayload.explanation),
+               }}
+               renderExplanationOnly={true}
+             />
            </div>
         </div>
       )}
@@ -1971,10 +2018,11 @@ export const VisualizationRenderer: React.FC<{
               );
             }
             if (viz.type === 'svg_diagram') {
-              const svgMarkup =
+              const svgMarkup = normalizeSvgDiagramMarkup(
                 (typeof viz.svgCode === 'string' && viz.svgCode.trim()) ||
-                (typeof viz.code === 'string' && viz.code.trim()) ||
-                '';
+                  (typeof viz.code === 'string' && viz.code.trim()) ||
+                  '',
+              );
               if (!svgMarkup) return null;
               return (
                 <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">

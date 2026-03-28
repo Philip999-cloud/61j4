@@ -1,6 +1,9 @@
-
 import { GradingStrategy } from './GradingStrategy';
 import { LinguisticAudit, SubjectExpertAnalysis } from '../types';
+import {
+  MATH_SOLUTION_TYPOGRAPHY_PROMPT_APPENDIX,
+  MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX,
+} from '../utils/mathScoringUtils';
 
 export class GsatMathBStrategy implements GradingStrategy {
   generatePrompt(content: string, audit: LinguisticAudit, expert: SubjectExpertAnalysis, instructions: string): string {
@@ -18,9 +21,9 @@ export class GsatMathBStrategy implements GradingStrategy {
     IMPORTANT: All output text MUST be in Traditional Chinese (繁體中文).
 
     # 🚨 FORMATTING DICTATORSHIP (ZERO TOLERANCE) 🚨
-    1. **THE "FLAT NO-ENTER" MATH LAW (STRICT KaTeX)**
-    - **NO CUSTOM SPACING**: You are STRICTLY FORBIDDEN from adding spacing arguments like \\\\[0.5em] or \\\\[1ex]. This WILL CRASH KaTeX.
-    - **Row Breaks**: Use EXACTLY \\\\\\\\ (four backslashes) to break matrix rows. Keep ENTIRE equation on one flat line.
+    1. **MATRIX ROW SYNTAX ONLY — "FLAT" LAW (STRICT KaTeX)**
+    - **NO CUSTOM SPACING**: FORBIDDEN \\\\[0.5em] or \\\\[1ex] inside matrices (crashes KaTeX).
+    - **Matrix rows only**: Use EXACTLY \\\\\\\\ (four backslashes) **between rows** of \`bmatrix\`/\`pmatrix\`. **Do not** put an entire multi-step derivation on one line — use \`aligned\` or multiple \`$$...$$\` blocks per **SOLUTION TYPOGRAPHY MANDATE** at the end.
     "correct_calculation": "$$ \\\\begin{bmatrix} r \\\\\\\\ s \\\\end{bmatrix} $$"
 
     2. **MATH NOTATION RULES (HUMAN-READABLE LATEX)**
@@ -57,8 +60,8 @@ export class GsatMathBStrategy implements GradingStrategy {
     **Schema protection**: Do not remove or replace \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`, etc.
 
     # FOOLPROOF COPY-PASTE TEMPLATES
-    **Vector Transformation (FLAT LINE ONLY):**
-    "correct_calculation": "旋轉變換為：\\n $$ \\\\begin{bmatrix} x' \\\\\\\\ y' \\\\end{bmatrix} = \\\\begin{bmatrix} \\\\cos\\\\theta & -\\\\sin\\\\theta \\\\\\\\ \\\\sin\\\\theta & \\\\cos\\\\theta \\\\end{bmatrix} \\\\begin{bmatrix} x \\\\\\\\ y \\\\end{bmatrix} $$"
+    **Vector Transformation (matrix rows use \\\\\\\\; narrative may use newlines):**
+    "correct_calculation": "旋轉變換：\\n $$ \\\\begin{bmatrix} x' \\\\\\\\ y' \\\\end{bmatrix} = \\\\begin{bmatrix} \\\\cos\\\\theta & -\\\\sin\\\\theta \\\\\\\\ \\\\sin\\\\theta & \\\\cos\\\\theta \\\\end{bmatrix} \\\\begin{bmatrix} x \\\\\\\\ y \\\\end{bmatrix} $$"
 
     **Perfect Native Object SVG (SINGLE QUOTES ONLY):**
     "visualization_code": {
@@ -176,6 +179,9 @@ export class GsatMathBStrategy implements GradingStrategy {
         }
       ]
     }
+
+    ${MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX}
+    ${MATH_SOLUTION_TYPOGRAPHY_PROMPT_APPENDIX}
     `;
   }
 }

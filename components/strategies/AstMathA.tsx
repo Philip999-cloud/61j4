@@ -261,6 +261,10 @@ const AstMathAStrategy: React.FC<Props> = ({ data, subjectName, originalText, is
     <div className="space-y-8 animate-in slide-in-from-bottom-8 duration-700">
       {rows.map((sub, idx) => {
         if (!sub) return null;
+        const stemRowKey =
+          sub.sub_id != null && String(sub.sub_id).trim() !== ''
+            ? `stem-${String(sub.sub_id)}`
+            : `stem-idx-${idx}`;
         const steps = transformToMathSteps(sub, subjectName);
         const safeSteps = Array.isArray(steps) ? steps : [];
 
@@ -275,7 +279,7 @@ const AstMathAStrategy: React.FC<Props> = ({ data, subjectName, originalText, is
         const resultScore = val(sub.result);
 
         return (
-          <div key={idx} className="bg-zinc-950 rounded-[2.5rem] p-8 border border-zinc-900 shadow-2xl relative overflow-hidden group">
+          <div key={stemRowKey} className="bg-zinc-950 rounded-[2.5rem] p-8 border border-zinc-900 shadow-2xl relative overflow-hidden group">
             <div className="flex items-center justify-between mb-8 relative z-10">
                <div className="flex items-center gap-4">
                   <span className="w-12 h-12 rounded-2xl bg-zinc-900 flex items-center justify-center text-zinc-500 font-black text-xl border border-zinc-800 shadow-inner">

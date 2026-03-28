@@ -397,3 +397,34 @@ export const getStepIcon = (type: MathStepType) => {
     default: return '•';
   }
 };
+
+/**
+ * 詳解與五段式等欄位之算式排版：強制逐步換行，與矩陣「列」專用之 FLAT 規則分離。
+ * 僅供 `generatePrompt` 拼接，不影響配分或轉錄。
+ */
+export const MATH_SOLUTION_TYPOGRAPHY_PROMPT_APPENDIX = `
+# ════════════════════════════════════════════════════════════════════════════
+# SOLUTION TYPOGRAPHY MANDATE（參考詳解 — 算式逐行呈現 — CRITICAL）
+# ════════════════════════════════════════════════════════════════════════════
+- **Scope**: Applies to \`correct_calculation\`, \`zero_compression\` fields (\`given\`, \`formula\`, \`substitute\`, \`derive\`, \`answer\`), and any stepwise solution strings where you show **multi-step algebra or numeric work**. Does **not** replace the separate **matrix-row** rule: inside \`\\\\begin{bmatrix}...\\\\end{bmatrix}\` (or pmatrix), matrix **rows** still use \`\\\\\\\\\` (four backslashes in JSON) only — that is unrelated to separating **derivation steps**.
+- **One major step per line**: Do NOT cram multiple equation transformations into one prose paragraph or one undifferentiated \`$$...$$\` blob. Each logically distinct step (e.g. substitute → simplify → solve) MUST appear on its **own** line or block.
+- **Preferred LaTeX**: Use a block \`$$ \\\\begin{aligned} ... \\\\end{aligned} $$\` and put **one equation or relation per row**, ending each row with \`\\\\\\\\\` (JSON-escaped as needed). Alternatively use **multiple** separate \`$$...$$\` blocks with blank lines or \`\\\\n\` between them.
+- **FORBIDDEN**: Chaining many \`=\` steps in a single line inside one display; hiding five steps inside one paragraph with only commas.
+- **Traditional Chinese** prose may introduce each step; keep math displays **vertically separated** for readability.
+`;
+
+/**
+ * Phase 3 數學策略共用附錄：題組內每一 `stem_sub_results` 子項須獨立填寫 `visualization_code`（或該子純代數時為 `null`），
+ * 與 `sub_id` 語意對齊。僅供 `generatePrompt` 拼接，不影響配分計算。
+ */
+export const MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX = `
+# ════════════════════════════════════════════════════════════════════════════
+# SUB-QUESTION VISUALIZATION MANDATE（題組子題獨立圖示 — CRITICAL）
+# ════════════════════════════════════════════════════════════════════════════
+- **Every** object in \`stem_sub_results[]\` MUST include the key \`visualization_code\`: either \`null\` **or** \`{ "explanation": "...", "visualizations": [ ... ] }\` with at least one **client-renderable** item when **that specific** sub-question benefits from any diagram (plane or solid geometry, coordinate graphs, vectors, function plots, etc.).
+- **Per \`sub_id\` binding**: \`visualization_code.explanation\` MUST describe the figure **for that sub-question only** and MUST mention that row's \`sub_id\` (題號／小題編號) in the **first sentence**. **FORBIDDEN**: outputting diagrams only on the first \`stem_sub_results\` item while later items omit \`visualization_code\` yet their written solution still depends on a figure — if a later sub needs a visual, that same row MUST contain its own \`visualization_code\` (you may repeat an equivalent \`geometry_json\` or \`svg_diagram\` when the printed figure is shared across subs).
+- **Per-item titles**: Each object in \`visualizations[]\` that has a \`title\` field SHOULD include that same row's \`sub_id\` in the title (e.g. "（小題乙）座標平面示意") so the UI clearly ties the figure to the sub-question index.
+- **Pure algebra / no diagram** for one sub: set \`visualization_code\` to \`null\` **only for that sub**.
+- **Types** (same as above sections): printed / regular-polygon → \`geometry_json\`; self-authored 2D → \`svg_diagram\` with full \`svgCode\`; 3D → \`plotly_chart\`; explicit functions → \`python_plot\` with required fields or \`plotly_chart\`.
+- **Scoring JSON**: Never remove or repurpose \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`, etc. \`visualization_code\` remains auxiliary only.
+`;

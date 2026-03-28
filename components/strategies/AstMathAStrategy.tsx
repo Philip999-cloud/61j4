@@ -380,6 +380,10 @@ const AstMathAStrategy: React.FC<Props> = ({
 
       {rows.map((sub, idx) => {
         if (!sub) return null;
+        const stemRowKey =
+          sub.sub_id != null && String(sub.sub_id).trim() !== ''
+            ? `stem-${String(sub.sub_id)}`
+            : `stem-idx-${idx}`;
         try {
           /** 分科物理／化學：科目名稱與下方三向度同源，避免重複四格＋進度條；以 resolve 為準（含英文 Chemistry／Physics） */
           const stemSubjectBase = resolveStemDisciplineFromSubject(subjectName);
@@ -405,7 +409,7 @@ const AstMathAStrategy: React.FC<Props> = ({
           })();
 
           return (
-            <div key={idx} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
+            <div key={stemRowKey} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
               <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between relative z-10">
                  <div className="flex min-w-0 flex-1 items-start gap-4">
                     <span className="w-12 h-12 shrink-0 rounded-2xl bg-[var(--bg-main)] flex items-center justify-center text-[var(--text-secondary)] font-black text-xl border border-[var(--border-color)] shadow-inner transition-colors">
@@ -584,6 +588,8 @@ const AstMathAStrategy: React.FC<Props> = ({
                 )}
               
               {(() => {
+                const subLabel = sub.sub_id?.trim() || `第 ${idx + 1} 小題`;
+                const questionFigureTitle = `題目圖形（${subLabel}）`;
                 const rawVc = sub.visualization_code as
                   | { explanation?: string; visualizations?: unknown[] }
                   | null
@@ -602,6 +608,8 @@ const AstMathAStrategy: React.FC<Props> = ({
                     type: 'geometry_json',
                     code: prefetchedQuestionGeometry,
                   });
+                /** 題幹預抓幾何：每個子列皆可作後備；標題／說明綁定本子題 sub_id／index */
+                const prefetchFallbackThisSub = prefetchOk;
 
                 let visualizationContent: typeof rawVc | {
                   explanation: string;
@@ -612,17 +620,17 @@ const AstMathAStrategy: React.FC<Props> = ({
                   }>;
                 } | null = null;
 
-                if (prefetchOk && renderableFromModel.length === 0) {
+                if (prefetchFallbackThisSub && renderableFromModel.length === 0) {
                   const explanation =
                     typeof rawVc?.explanation === 'string' && rawVc.explanation.trim()
                       ? rawVc.explanation.trim()
-                      : '以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。';
+                      : `【${subLabel}】以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。`;
                   visualizationContent = {
                     explanation,
                     visualizations: [
                       {
                         type: 'geometry_json',
-                        title: '題目圖形',
+                        title: questionFigureTitle,
                         code: prefetchedQuestionGeometry,
                       },
                     ],
@@ -632,7 +640,7 @@ const AstMathAStrategy: React.FC<Props> = ({
                     (it) => (it as { type?: string }).type === 'geometry_json',
                   );
                   if (
-                    prefetchOk &&
+                    prefetchFallbackThisSub &&
                     stemSubjectBase === 'math' &&
                     renderableFromModel.length > 0 &&
                     !hasModelGeometry
@@ -642,14 +650,14 @@ const AstMathAStrategy: React.FC<Props> = ({
                     visualizationContent = {
                       explanation: [
                         exModel,
-                        '【題目圖形】以下為依題幹影像預先萃取之示意圖，與解題用圖表併列對照。',
+                        `【題目圖形｜${subLabel}】以下為依題幹影像預先萃取之示意圖，與解題用圖表併列對照。`,
                       ]
                         .filter(Boolean)
                         .join('\n'),
                       visualizations: [
                         {
                           type: 'geometry_json',
-                          title: '題目圖形',
+                          title: questionFigureTitle,
                           code: prefetchedQuestionGeometry!,
                         },
                         ...rawItems,
@@ -658,13 +666,13 @@ const AstMathAStrategy: React.FC<Props> = ({
                   } else {
                     visualizationContent = rawVc;
                   }
-                } else if (prefetchOk) {
+                } else if (prefetchFallbackThisSub) {
                   visualizationContent = {
-                    explanation: '以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。',
+                    explanation: `【${subLabel}】以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。`,
                     visualizations: [
                       {
                         type: 'geometry_json',
-                        title: '題目圖形',
+                        title: questionFigureTitle,
                         code: prefetchedQuestionGeometry,
                       },
                     ],
@@ -772,6 +780,11 @@ const AstMathAStrategy: React.FC<Props> = ({
                      prefetchedGeometryJson={prefetchedQuestionGeometry}
                      onRetryExtraction={onRetryQuestionGeometryExtraction}
                      allowPrefetchedGeometryFallback={stemSubjectBase === 'math'}
+                     prefetchedGeometryVizTitle={
+                       stemSubjectBase === 'math'
+                         ? `題目圖形（${sub.sub_id?.trim() || `第 ${idx + 1} 小題`}）`
+                         : undefined
+                     }
                    />
                  );
               })()}
@@ -803,7 +816,7 @@ const AstMathAStrategy: React.FC<Props> = ({
           );
         } catch (error) {
           console.error('[Grading Fatal Error]', error, '\nPayload:', sub);
-          return <div key={idx} className="p-4 bg-red-500/10 text-red-500 border border-red-500 rounded-xl my-4">圖表或步驟渲染失敗，請重試或回報。</div>;
+          return <div key={stemRowKey} className="p-4 bg-red-500/10 text-red-500 border border-red-500 rounded-xl my-4">圖表或步驟渲染失敗，請重試或回報。</div>;
         }
       })}
     </div>

@@ -1,6 +1,9 @@
-
 import { GradingStrategy } from './GradingStrategy';
 import { LinguisticAudit, SubjectExpertAnalysis } from '../types';
+import {
+  MATH_SOLUTION_TYPOGRAPHY_PROMPT_APPENDIX,
+  MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX,
+} from '../utils/mathScoringUtils';
 
 export class GsatMathAStrategy implements GradingStrategy {
   generatePrompt(content: string, audit: LinguisticAudit, expert: SubjectExpertAnalysis, instructions: string): string {
@@ -20,10 +23,9 @@ export class GsatMathAStrategy implements GradingStrategy {
     # 🚨 ABSOLUTE STRICT-MODE PROTOCOL (ZERO TOLERANCE) 🚨
     You are generating a JSON string. If you disobey these rules, the frontend JSON parser will crash.
 
-    1. **THE "FLAT NO-ENTER" MATH LAW (STRICT KaTeX)**
-    You MUST write all matrices and equations on a SINGLE, continuous line.
-    - **Row Breaks**: Use EXACTLY \\\\\\\\ (four backslashes) to break matrix rows.
-    - **NO CUSTOM SPACING**: You are STRICTLY FORBIDDEN from adding vertical spacing arguments like \\\\[0.5em].
+    1. **MATRIX ROW SYNTAX ONLY — "FLAT" LAW (STRICT KaTeX)**
+    Applies **only** to **rows inside** \`bmatrix\` / \`pmatrix\`: separate matrix rows with EXACTLY \\\\\\\\ (four backslashes in JSON). **Multi-step solution derivations** MUST use separate lines or \`aligned\` — see **SOLUTION TYPOGRAPHY MANDATE** at the end of this prompt (do not flatten all steps into one line).
+    - **NO CUSTOM SPACING**: FORBIDDEN \\\\[0.5em] etc. inside matrices.
     **GOOD**: "$$ \\\\begin{bmatrix} a & b \\\\\\\\ c & d \\\\end{bmatrix} $$"
 
     2. **MATH NOTATION RULES (HUMAN-READABLE LATEX)**
@@ -168,6 +170,9 @@ export class GsatMathAStrategy implements GradingStrategy {
         }
       ]
     }
+
+    ${MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX}
+    ${MATH_SOLUTION_TYPOGRAPHY_PROMPT_APPENDIX}
     `;
   }
 }
