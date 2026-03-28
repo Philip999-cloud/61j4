@@ -13,6 +13,7 @@ import {
 import { StrategyFactory } from "./strategies/StrategyFactory";
 import { allocateStemSubQuartetFromEarned } from "./utils/mathScoringUtils";
 import { dedupeStemSubResultsBySubId } from "./utils/dedupeStemSubResults";
+import { TEACH_FRAMEWORK_PROMPT } from "./utils/systemPrompt";
 
 const STRICT_MATH_FORMAT_RULES = `You are an expert STEM tutor and a strict JSON API worker. Your outputs are rendered by KaTeX on the frontend. You MUST strictly adhere to the following LaTeX formatting rules to prevent parsing errors ("Math rendering failed"). Failure to follow these rules will crash the application.
 
@@ -68,12 +69,15 @@ const AST_CHEMISTRY_PHASE3_SUBJECT_ID = 'ast-chemistry';
 const AST_BIOLOGY_PHASE3_SUBJECT_ID = 'ast-biology';
 /** 分科物理：長 prompt（一題多解、五段式、3D plotly）16k 易 MAX_TOKENS 截斷，批改與圖示後段缺失 */
 const AST_PHYSICS_PHASE3_SUBJECT_ID = 'ast-physics';
+/** 學測自然科：IntegratedScience 強制每子題 visualization_code、五段式、CEEC 等，JSON 體積與分科理科同級；16k 易截斷致詳解不完整 */
+const GSAT_SCIENCE_PHASE3_SUBJECT_ID = 'gsat-science';
 
 const STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS = new Set([
   AST_MATH_A_PHASE3_SUBJECT_ID,
   AST_CHEMISTRY_PHASE3_SUBJECT_ID,
   AST_BIOLOGY_PHASE3_SUBJECT_ID,
   AST_PHYSICS_PHASE3_SUBJECT_ID,
+  GSAT_SCIENCE_PHASE3_SUBJECT_ID,
 ]);
 
 function maxOutputTokensForStemPhase3(subjectId?: string): number {
@@ -127,6 +131,22 @@ visualizations[].type 可渲染者：**geometry_json、svg_diagram、plotly_char
 嚴禁改動 setup、process、result、logic、max_points 的語意與加總規則；visualization_code 為獨立輔助欄位，不得刪減或取代評分 JSON 結構。
 `;
 
+/** 與 ResultsDisplay STEM 判斷對齊；通過者附加 T.E.A.C.H 框架（不影響國文／英文寫作等） */
+function isStemSubjectForTeach(subjectName: string): boolean {
+  const keys = [
+    '數學', '數甲', '數A', '數B', '物理', '化學', '生物', '地球科學', '地科',
+    '自然科', '跨科', '自然',
+    'Calculus', 'Math', 'Science', 'Integrated',
+  ];
+  return keys.some((k) => subjectName.includes(k));
+}
+
+const TEACH_JSON_COMPAT_NOTE = `
+
+# T.E.A.C.H 與 JSON 輸出相容（CRITICAL）
+當本任務要求輸出「單一合法 JSON 物件」（主席綜評、stem_sub_results、標準詳解 schema 等）：頂層必須仍是可 JSON.parse 的結構，不得以純 Markdown 全文取代 JSON。請將 T.E.A.C.H. 五個區塊（標題與 Emoji 須與上文完全一致）寫入 remarks_zh、各 stem_sub_results 的 feedback、correct_calculation、zero_compression 內各字串欄位等敘述欄位（可合理分配於多欄，但五區塊皆須清楚可辨）。「動態情境路由」之批改判定（✅／⚠️／❌）置於該子題 feedback 或整卷 remarks_zh 開頭。JSON 字串內的 LaTeX 仍須雙跳脫反斜線。
+`;
+
 function buildSystemInstruction(baseInstruction: string, subjectName: string): string {
   let result = baseInstruction;
   if (isChemistrySubject(subjectName)) {
@@ -164,6 +184,9 @@ type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
   }
   if (needsNaturalScienceVizAppendix(subjectName)) {
     result += NATURAL_SCIENCE_VIZ_APPENDIX;
+  }
+  if (isStemSubjectForTeach(subjectName)) {
+    result += `\n\n${TEACH_FRAMEWORK_PROMPT}${TEACH_JSON_COMPAT_NOTE}`;
   }
   return result;
 }
