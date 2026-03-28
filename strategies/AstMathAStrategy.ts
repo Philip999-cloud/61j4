@@ -75,6 +75,11 @@ export class AstMathAStrategy implements GradingStrategy {
       }]
     }
 
+    **旋轉橢圓／隱式二次曲線（含 xy 項）— 嚴禁 python_script**
+    - **FORBIDDEN**: \`python_script\`, Matplotlib 字串, or any "run script to see figure" output for these visuals — the browser does not execute them.
+    - **Concept / pedagogy match (e.g. 原 Γ vs 旋轉後 Γ′, 標記點 A、P′、P, 虛線／實線與色碼與題意一致)**: prefer **\`svg_diagram\`** with full \`svgCode\`: axes, \`stroke-dasharray\` for dashed ellipses, \`<ellipse>\` and/or \`transform="rotate(...)"\`, \`<circle>\` or markers for points, \`<text>\` labels. Align colors with \`visualization_code.explanation\`.
+    - **Scale-accurate plot to the given equation**: use **\`plotly_chart\`** with real \`data\` traces — e.g. multiple \`scatter\` with \`mode: "lines"\` for parametric ellipses, or \`contour\` for implicit level sets; key points as \`scatter\` \`mode: "markers"\`. **Never** emit a plotly item with only \`title\`/\`caption\` and empty or non-renderable \`data\`.
+
     **TEMPLATE: 圓錐／旋轉體 (Plotly，嚴禁四面體冒充圓錐)**
     - 圓錐：\`mesh3d\` 頂點 + 底圓周（約 48 等分）+ \`i,j,k\` 三角扇；不可只用 4 個頂點。
     - 繞 x 軸旋轉體：一條 \`scatter3d\` 畫母線，另加半透明 \`mesh3d\` 畫旋轉曲面（x 與方位角皆需足夠細分）。
@@ -155,6 +160,11 @@ export class AstMathAStrategy implements GradingStrategy {
     # ════════════════════════════════════════════════════════════
     # END GEOMETRIC PRECISION PROTOCOL v4
     # ════════════════════════════════════════════════════════════
+
+    # 參考詳解深度（數學甲 — correct_calculation / 標準演算流程）
+    - **Language**: Traditional Chinese prose + readable LaTeX; follow the **matrix-row** rule and the **SOLUTION TYPOGRAPHY MANDATE** appended at the end of this prompt (one major equation step per line or aligned row).
+    - **Section headings**: Structure \`correct_calculation\` with clear bracketed headings, e.g. 【已知條件】【核心公式／定理】【代入】【逐步推導】【最終答案】 (adjust labels to fit the problem). Within each section, **one transformation per display line** — do **not** chain many \`=\` steps in a single line or hide multiple steps in one comma-separated paragraph.
+    - **逐步推導**: Show **intermediate arithmetic** explicitly (e.g. combine fractions before simplifying a radical; write \`\\frac{25}{9}+\\frac{20}{9}=\\frac{45}{9}\` before \`\\sqrt{5}\`). Where helpful, add a **short** conceptual sentence (e.g. why the farthest point from the origin on a centered ellipse lies on a major-axis vertex) without bloating \`alternative_solutions\` before core fields are complete.
 
     # ALTERNATIVE SOLUTIONS (PRIORITY AFTER CORE GRADING — ANTI-TRUNCATION)
     **Output budget**: You MUST first fully complete, for **every** sub-question: \`feedback\`, \`correct_calculation\`, stepwise fields, and \`visualization_code\` / \`zero_compression\` when applicable. **Never** let long \`alternative_solutions\` push the JSON past the token limit — incomplete JSON breaks the UI.

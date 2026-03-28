@@ -114,8 +114,11 @@ const MATH_STEM_VIZ_APPENDIX = `
 
 # MATH STEM — visualization_code（結構提醒，不改評分欄位）
 每一個 stem_sub_results 項目必須包含 "visualization_code" 鍵：其值為 { "explanation": "...", "visualizations": [ ... ] } 或 null。
-若小題涉及幾何、座標、函數圖形、向量、圓錐曲線、積分面積等需要精準圖示者，不得以純文字描述代替圖形。**題目影像中有印刷幾何圖（多邊形、塗色區、座標示意等）時，必須輸出 geometry_json（依科目策略之 topology／solver，欄位 code）或完整 svg_diagram（欄位 svgCode，完整 <svg>...</svg>）；禁止用空的或僅有標題的 plotly_chart 充當圖形。** 3D 空間幾何用 plotly_chart（data 須含可繪製的 traces）；平面函數圖優先 python_plot（func_str、x_range、y_range 與現有沙箱一致）。僅當無法以上述類型表達時，可使用 type "python_script" 並提供完整腳本字串（欄位 code）；前端僅展示程式碼、不執行。
-visualizations[].type 可使用：geometry_json、svg_diagram、plotly_chart、python_plot、python_script（後者僅備援）。
+若小題涉及幾何、座標、函數圖形、向量、圓錐曲線、積分面積等**需要在介面上顯示的圖示**，不得以純文字描述代替圖形，且**嚴禁**使用 type "python_script" 或 Matplotlib 腳本充當圖形（前端不執行 Python，使用者只會看到錯誤提示）。
+**題目影像中有印刷幾何圖（多邊形、塗色區、座標示意等）時，必須輸出 geometry_json（依科目策略之 topology／solver，欄位 code）或完整 svg_diagram（欄位 svgCode，完整 <svg>...</svg>）；禁止用空的或僅有標題的 plotly_chart 充當圖形。**
+**圓錐曲線、含 xy 交叉項之旋轉橢圓、隱式二次曲線等**：必須用 **svg_diagram**（座標軸、虛線／實線橢圓、標記點與色碼）或 **plotly_chart**（例如多條 scatter mode "lines" 畫參數曲線、contour 畫 F(x,y)=c，關鍵點用 scatter mode "markers"；data 須可繪製，不可僅有 title）。
+3D 空間幾何用 plotly_chart（data 須含可繪製的 traces）；平面顯式函數圖優先 python_plot（func_str、x_range、y_range 與現有沙箱一致）。若無法滿足 python_plot 必填欄位，改 plotly_chart 或 svg_diagram，**不要**改 output python_script。
+visualizations[].type 可渲染者：**geometry_json、svg_diagram、plotly_chart、python_plot**。**不要**在 visualizations 內放入 python_script 作為題圖或解題示意圖。
 純代數演算、無任何圖示需求時可將 visualization_code 設為 null。
 嚴禁改動 setup、process、result、logic、max_points 的語意與加總規則；visualization_code 為獨立輔助欄位，不得刪減或取代評分 JSON 結構。
 `;
