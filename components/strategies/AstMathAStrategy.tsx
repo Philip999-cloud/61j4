@@ -409,7 +409,7 @@ const AstMathAStrategy: React.FC<Props> = ({
           })();
 
           return (
-            <div key={stemRowKey} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
+            <div key={`${stemRowKey}-${idx}`} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
               <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between relative z-10">
                  <div className="flex min-w-0 flex-1 items-start gap-4">
                     <span className="w-12 h-12 shrink-0 rounded-2xl bg-[var(--bg-main)] flex items-center justify-center text-[var(--text-secondary)] font-black text-xl border border-[var(--border-color)] shadow-inner transition-colors">
@@ -826,7 +826,7 @@ const AstMathAStrategy: React.FC<Props> = ({
           );
         } catch (error) {
           console.error('[Grading Fatal Error]', error, '\nPayload:', sub);
-          return <div key={stemRowKey} className="p-4 bg-red-500/10 text-red-500 border border-red-500 rounded-xl my-4">圖表或步驟渲染失敗，請重試或回報。</div>;
+          return <div key={`${stemRowKey}-${idx}`} className="p-4 bg-red-500/10 text-red-500 border border-red-500 rounded-xl my-4">圖表或步驟渲染失敗，請重試或回報。</div>;
         }
       })}
     </div>

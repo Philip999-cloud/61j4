@@ -12,6 +12,7 @@ import {
 } from "./types";
 import { StrategyFactory } from "./strategies/StrategyFactory";
 import { allocateStemSubQuartetFromEarned } from "./utils/mathScoringUtils";
+import { dedupeStemSubResultsBySubId } from "./utils/dedupeStemSubResults";
 
 const STRICT_MATH_FORMAT_RULES = `You are an expert STEM tutor and a strict JSON API worker. Your outputs are rendered by KaTeX on the frontend. You MUST strictly adhere to the following LaTeX formatting rules to prevent parsing errors ("Math rendering failed"). Failure to follow these rules will crash the application.
 
@@ -1190,6 +1191,9 @@ export async function runModeratorSynthesis(
     if (!parsed.ceec_results) parsed.ceec_results = { total_score: 0, breakdown: {} };
     if (!parsed.stem_sub_results) parsed.stem_sub_results = [];
     else if (!Array.isArray(parsed.stem_sub_results)) parsed.stem_sub_results = [parsed.stem_sub_results];
+    parsed.stem_sub_results = dedupeStemSubResultsBySubId(
+      parsed.stem_sub_results as Record<string, unknown>[],
+    ) as typeof parsed.stem_sub_results;
     if (!parsed.growth_roadmap) parsed.growth_roadmap = [];
     for (const sub of parsed.stem_sub_results as { key_molecules_smiles?: unknown }[]) {
       if (!Array.isArray(sub.key_molecules_smiles)) sub.key_molecules_smiles = [];

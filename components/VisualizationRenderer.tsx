@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import { SmartChart } from './SmartChart';
 import Plotly from 'plotly.js-dist';
 import { Image as ImageIcon, Loader2 } from 'lucide-react';
@@ -81,6 +81,21 @@ function stableStringifyForVizFingerprint(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+function subscribeHtmlDarkClass(onStoreChange: () => void): () => void {
+  const el = document.documentElement;
+  const obs = new MutationObserver(() => onStoreChange());
+  obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+  return () => obs.disconnect();
+}
+
+function getHtmlDarkClassSnapshot(): boolean {
+  return document.documentElement.classList.contains('dark');
+}
+
+function getHtmlDarkClassServerSnapshot(): boolean {
+  return false;
 }
 
 function vizRawHadFreeBodyDiagram(raw: unknown[] | undefined | null): boolean {
@@ -615,6 +630,12 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
   const chartId = useRef(`plotly-${Math.random().toString(36).substr(2, 9)}`);
   const [plotlyWebGlNote, setPlotlyWebGlNote] = useState<string | null>(null);
 
+  const isDarkClass = useSyncExternalStore(
+    subscribeHtmlDarkClass,
+    getHtmlDarkClassSnapshot,
+    getHtmlDarkClassServerSnapshot,
+  );
+
   const plotInputsSig = useMemo(() => {
     try {
       return JSON.stringify({
@@ -623,11 +644,12 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
         title: title ?? null,
         caption: caption ?? null,
         explanation: explanation ?? null,
+        isDarkClass,
       });
     } catch {
-      return `${String(data)}|${String(layout)}|${title}|${caption}|${explanation}`;
+      return `${String(data)}|${String(layout)}|${title}|${caption}|${explanation}|${isDarkClass}`;
     }
-  }, [data, layout, title, caption, explanation]);
+  }, [data, layout, title, caption, explanation, isDarkClass]);
 
   useEffect(() => {
     setPlotlyWebGlNote(null);
