@@ -2028,15 +2028,14 @@ export const VisualizationRenderer: React.FC<{
               );
               if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-visible group transition-colors">
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto overflow-y-visible max-w-full relative border border-[var(--border-color)]/60"
-                    style={{ minHeight: '200px' }}
+                    className="flex min-h-[240px] w-full flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 max-h-[min(560px,80vh)] overflow-y-auto overflow-x-auto max-w-full relative [contain:layout]"
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-0 py-2" />
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] py-1" />
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2095,7 +2094,7 @@ export const VisualizationRenderer: React.FC<{
               }
               if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-visible group transition-colors">
+                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
@@ -2103,10 +2102,9 @@ export const VisualizationRenderer: React.FC<{
                     </h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full items-center justify-center bg-[var(--bg-main)] rounded-xl overflow-x-auto overflow-y-visible max-w-full relative border border-[var(--border-color)]/60"
-                    style={{ minHeight: '200px' }}
+                    className="flex min-h-[240px] w-full flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 max-h-[min(560px,80vh)] overflow-y-auto overflow-x-auto max-w-full relative [contain:layout]"
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-0 py-2" />
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] py-1" />
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">

@@ -27,8 +27,7 @@ export const SmartSvg: React.FC<{ svgCode: string; className?: string }> = ({ sv
 
   return (
     <div
-      className="smart-svg-foreignobject-safe flex w-full min-h-[240px] items-center justify-center overflow-visible [&_.physics-renderer-root]:overflow-visible"
-      style={{ overflow: 'visible' }}
+      className="smart-svg-foreignobject-safe flex w-full min-h-[200px] flex-col items-stretch justify-center overflow-x-auto overflow-y-visible [&_.physics-renderer-root]:w-full [&_.physics-renderer-root]:overflow-x-auto [&_.physics-renderer-root]:overflow-y-visible"
     >
       <PhysicsRenderer svgCode={cleanSvg} preserveDiagramColors className={className} />
     </div>

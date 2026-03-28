@@ -159,7 +159,7 @@ export function geometryJsonToSvg(geoRaw: GeometryJSON): string {
 
   // 1. SVG 開頭
   parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="max-width:${W}px;height:auto;display:block;margin:0 auto">`
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="max-width:${W}px;width:100%;height:auto;aspect-ratio:${W} / ${H};display:block;margin:0 auto">`
   );
 
   // 2. 座標軸（如果有）

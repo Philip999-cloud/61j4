@@ -72,6 +72,13 @@ const PHYSICS_SVG_SANITIZE: DOMPurifyConfig = {
     'marker-start',
     'marker-mid',
     'marker-end',
+    'dominant-baseline',
+    'opacity',
+    'points',
+    'stroke-width',
+    'stroke-dasharray',
+    'fill-opacity',
+    'stroke-opacity',
     'markerUnits',
     'markerWidth',
     'markerHeight',
@@ -194,11 +201,21 @@ function normalizeSvgResponsive(svg: SVGSVGElement) {
   if (!svg.getAttribute('viewBox')) {
     svg.setAttribute('viewBox', '0 0 400 300');
   }
+  const vbRaw = svg.getAttribute('viewBox') || '';
+  const vbTok = vbRaw.trim().split(/[\s,]+/).map(parseFloat);
+  if (
+    vbTok.length === 4 &&
+    vbTok.every((n) => Number.isFinite(n)) &&
+    vbTok[2] > 0 &&
+    vbTok[3] > 0
+  ) {
+    /** 取代 height:100%（flex 內易裁切）與裸 height:auto（部分版面下高度塌成 0） */
+    svg.style.aspectRatio = `${vbTok[2]} / ${vbTok[3]}`;
+  }
   svg.setAttribute('width', '100%');
   svg.removeAttribute('height');
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   svg.style.width = '100%';
-  /** 勿用 height:100%：flex 父層高度未定時會錯算，圖形常被裁成「只見一角／約 1/4」 */
   svg.style.height = 'auto';
   svg.style.maxWidth = '100%';
   svg.style.display = 'block';
@@ -330,9 +347,9 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({
 
       fo.setAttribute('x', textNode.getAttribute('x') ?? '0');
       fo.setAttribute('y', textNode.getAttribute('y') ?? '0');
-      /** 1×1 foreignObject 在 WebKit 等環境易誤裁切整張 SVG；給足版面仍靠 overflow:visible 外溢 */
-      fo.setAttribute('width', '384');
-      fo.setAttribute('height', '120');
+      /** 過大的 foreignObject 會在 SVG overflow:visible 時外溢、蓋住下方詳解區塊；維持 1×1 + overflow visible */
+      fo.setAttribute('width', '1');
+      fo.setAttribute('height', '1');
       fo.setAttribute('overflow', 'visible');
       fo.style.overflow = 'visible';
       fo.style.pointerEvents = 'none';
@@ -426,7 +443,7 @@ export const PhysicsRenderer: React.FC<PhysicsRendererProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`physics-renderer-root smart-svg-root isolate w-full max-w-full min-h-0 overflow-x-auto overflow-y-visible [&_svg]:max-w-none ${preserveDiagramColors ? '' : 'text-[var(--text-primary)]'} ${className}`}
+      className={`physics-renderer-root smart-svg-root isolate w-full max-w-full min-h-[180px] overflow-x-auto overflow-y-visible [&_svg]:max-w-full [&_svg]:h-auto ${preserveDiagramColors ? '' : 'text-[var(--text-primary)]'} ${className}`}
       dangerouslySetInnerHTML={{ __html: safeSvgCode }}
     />
   );

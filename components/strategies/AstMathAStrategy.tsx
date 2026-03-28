@@ -783,17 +783,19 @@ const AstMathAStrategy: React.FC<Props> = ({
                      />
                    </div>
                  ) : (
-                   <VisualizationRenderer
-                     content={vc}
-                     prefetchedGeometryJson={prefetchedQuestionGeometry}
-                     onRetryExtraction={onRetryQuestionGeometryExtraction}
-                     allowPrefetchedGeometryFallback={stemSubjectBase === 'math'}
-                     prefetchedGeometryVizTitle={
-                       stemSubjectBase === 'math'
-                         ? `題目圖形（${sub.sub_id?.trim() || `第 ${idx + 1} 小題`}）`
-                         : undefined
-                     }
-                   />
+                   <div className="relative z-[1] isolate">
+                     <VisualizationRenderer
+                       content={vc}
+                       prefetchedGeometryJson={prefetchedQuestionGeometry}
+                       onRetryExtraction={onRetryQuestionGeometryExtraction}
+                       allowPrefetchedGeometryFallback={stemSubjectBase === 'math'}
+                       prefetchedGeometryVizTitle={
+                         stemSubjectBase === 'math'
+                           ? `題目圖形（${sub.sub_id?.trim() || `第 ${idx + 1} 小題`}）`
+                           : undefined
+                       }
+                     />
+                   </div>
                  );
               })()}
 
@@ -803,7 +805,7 @@ const AstMathAStrategy: React.FC<Props> = ({
 
               {sub.correct_calculation &&
                 (!zeroCompressionHasContent(sub.zero_compression) || isAstMathA) && (
-                 <div className="mt-8 relative z-10 bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
+                 <div className="mt-8 relative z-[5] bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">
                        <span className="w-2 h-2 rounded-full bg-pink-500"></span>
                        {isSolutionOnly ? '標準演算流程 (Standard Derivation)' : '參考詳解 (Reference Solution)'}
