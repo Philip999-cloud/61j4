@@ -163,21 +163,22 @@ export class PhysicsStrategy implements GradingStrategy {
             "yaxis": { "title": "y", "showgrid": true, "gridcolor": "#334155", "zerolinecolor": "#22c55e" },
             "zaxis": { "title": "z", "showgrid": true, "gridcolor": "#334155", "zerolinecolor": "#3b82f6" },
             "camera": { "projection": { "type": "orthographic" }, "eye": { "x": 1.2, "y": -1.2, "z": 0.8 } },
-            "aspectmode": "cube"
+            "aspectmode": "data"
         },
         "margin": { "l": 0, "r": 0, "b": 0, "t": 0 },
         "showlegend": true,
         "legend": { "x": 0, "y": 1, "font": { "color": "#cbd5e1", "size": 14 } }
     }
+    **3D aspect ratio**: \`aspectmode\`: \`"data"\` lets axis scales follow the data (avoids squashed trajectories when one axis is nearly constant). Use \`"cube"\` only when the problem explicitly needs equal geometric scale on x,y,z (e.g. symmetry demonstration).
 
-    # ALTERNATIVE SOLUTIONS (MANDATORY)
-    If CORRECT, provide 7 distinct alternative methods (e.g. Energy Conservation, Newton's Laws, Momentum, Dimensional Analysis, etc.) with full derivation.
+    # ALTERNATIVE SOLUTIONS (MANDATORY — FIXED COUNT)
+    If the student's work is CORRECT, you MUST provide **exactly 7** distinct alternative methods (e.g. Energy Conservation, Newton's Laws, Momentum, Dimensional Analysis, Work–Energy, Kinematics, Lagrangian-style shortcut where applicable) with full derivation — **no fewer than 7** and **no duplicates**.
+    **JSON completeness**: You MUST still output **valid, complete JSON** for the entire response. Fully finish, for **every** sub-question: \`feedback\`, \`setup\`/\`process\`/\`result\`/\`logic\`, \`zero_compression\`, \`correct_calculation\`, \`visualization_code\` (or null), and **all seven** \`alternative_solutions\` entries. If length is tight, keep each of the seven methods focused (name + key steps + short 繁中「為何有效」) rather than omitting fields or truncating the JSON.
     
-    **CRITICAL DETAILED REQUIREMENT FOR MULTIPLE SOLUTIONS**:
-    Each alternative solution MUST be EXTREMELY DETAILED. You must provide:
-    1. A clear Method Name.
+    **CRITICAL DETAILED REQUIREMENT FOR EACH OF THE 7 METHODS**:
+    1. A clear method name (e.g. "解法一：能量守恆").
     2. Step-by-step mathematical derivations (using $$...$$).
-    3. Thorough explanatory text in Traditional Chinese detailing "why" this method works, so students can fully understand the logic. Do NOT just give a brief summary or a single equation.
+    3. Thorough explanatory text in Traditional Chinese on why the method works; do NOT replace with a single equation only.
 
     # ZERO-COMPRESSION OBJECT (五段式 — MANDATORY PER SUB-QUESTION)
     For each "stem_sub_results" item you MUST include "zero_compression": { "given", "formula", "substitute", "derive", "answer" } — all five strings in Traditional Chinese, substantive content in each (no placeholders). Map semantically to: 已知、公式、代入、推導、解答. "derive" must show every intermediate algebraic step; do not compress. LaTeX in strings: use $$...$$ and double-escaped backslashes per JSON rules.
@@ -250,7 +251,7 @@ export class PhysicsStrategy implements GradingStrategy {
                  "type": "plotly_chart",
                  "title": "3D Physics Diagram",
                  "data": [{ "type": "scatter3d", "mode": "markers", "x": [0], "y": [0], "z": [0] }],
-                 "layout": { "scene": { "aspectmode": "cube" } }
+                 "layout": { "scene": { "aspectmode": "data" } }
                }
              ]
           },

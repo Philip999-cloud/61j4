@@ -65,11 +65,14 @@ const AST_MATH_A_PHASE3_SUBJECT_ID = 'ast-math-a';
 const AST_CHEMISTRY_PHASE3_SUBJECT_ID = 'ast-chemistry';
 /** 分科生物：與化學同樣套用 compounds schema + 必填 visualization_code／五段式，16k 易截斷致 JSON 不完整 */
 const AST_BIOLOGY_PHASE3_SUBJECT_ID = 'ast-biology';
+/** 分科物理：長 prompt（一題多解、五段式、3D plotly）16k 易 MAX_TOKENS 截斷，批改與圖示後段缺失 */
+const AST_PHYSICS_PHASE3_SUBJECT_ID = 'ast-physics';
 
 const STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS = new Set([
   AST_MATH_A_PHASE3_SUBJECT_ID,
   AST_CHEMISTRY_PHASE3_SUBJECT_ID,
   AST_BIOLOGY_PHASE3_SUBJECT_ID,
+  AST_PHYSICS_PHASE3_SUBJECT_ID,
 ]);
 
 function maxOutputTokensForStemPhase3(subjectId?: string): number {
@@ -863,7 +866,7 @@ export async function runModeratorSynthesis(
     responseMimeType: "application/json" as const,
     systemInstruction: buildSystemInstruction(systemInstruction, subjectName),
     temperature: 0.2,
-    /** 化學／物理 compounds + stem_sub_results 體積大；數學甲與分科化學見 maxOutputTokensForStemPhase3（65536） */
+    /** 化學／物理 compounds + stem_sub_results 體積大；數學甲、分科化學／生物／物理見 maxOutputTokensForStemPhase3（65536） */
     maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
     ...(COMPOUNDS_SCHEMA_SUBJECTS.some(k => subjectName.includes(k)) && {
       responseSchema: {
