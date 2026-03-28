@@ -1105,7 +1105,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
   }, [plotInputsSig]);
 
   return (
-    <div className="w-full space-y-1">
+    <div className="w-full max-w-full max-h-[min(72vh,560px)] overflow-auto space-y-1">
       <div
         id={chartId.current}
         data-asea-will-read-frequently
@@ -2035,9 +2035,9 @@ export const VisualizationRenderer: React.FC<{
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-x-auto overflow-y-hidden max-w-full relative"
+                    className="flex min-h-[240px] max-h-[min(72vh,560px)] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-auto max-w-full relative"
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] py-1" />
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] max-h-full py-1 [&_svg]:max-h-[min(68vh,500px)] [&_svg]:max-w-full [&_svg]:h-auto" />
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2104,9 +2104,9 @@ export const VisualizationRenderer: React.FC<{
                     </h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-x-auto overflow-y-hidden max-w-full relative"
+                    className="flex min-h-[240px] max-h-[min(72vh,560px)] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-auto max-w-full relative"
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] py-1" />
+                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] max-h-full py-1 [&_svg]:max-h-[min(68vh,500px)] [&_svg]:max-w-full [&_svg]:h-auto" />
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2138,7 +2138,7 @@ export const VisualizationRenderer: React.FC<{
                       <div className="mb-3 flex justify-between items-center px-1">
                          <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{viz.title || '3D Molecular Model'}</h5>
                       </div>
-                      <div className="min-h-[280px] rounded-xl overflow-hidden border border-[var(--border-color)]/60 bg-[var(--bg-main)]">
+                      <div className="min-h-[280px] max-h-[min(72vh,560px)] max-w-full overflow-auto rounded-xl border border-[var(--border-color)]/60 bg-[var(--bg-main)]">
                         <Viewer3D
                           cid={viz.cid}
                           smiles={viz.smiles}

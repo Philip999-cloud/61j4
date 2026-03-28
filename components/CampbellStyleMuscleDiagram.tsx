@@ -109,7 +109,7 @@ export default function CampbellStyleMuscleDiagram() {
         let row_y = [], row_z = [];
         for (let j = 0; j <= size; j++) {
             let y = -2.5 + (5 * j / size); row_y.push(y);
-            row_z.push(x*x + y*y + 2);
+            row_z.push(x + y);
         }
         if(i === 0) y_vals = row_y;
         z_vals.push(row_z);
@@ -123,7 +123,7 @@ export default function CampbellStyleMuscleDiagram() {
     }], {
         margin: { l: 0, r: 0, b: 0, t: 0 },
         paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
-        scene: { ...ggScene, zaxis: {range: [0, 10], title: 'Z', zerolinecolor: '#3b82f6', ...ggAxis} }
+        scene: { ...ggScene, zaxis: {range: [-5, 5], title: 'Z', zerolinecolor: '#3b82f6', ...ggAxis} }
     }, {responsive: true, displayModeBar: false});
 
     // ==========================================
@@ -214,7 +214,7 @@ export default function CampbellStyleMuscleDiagram() {
                     3. 專業級 3D 函數 (正交投影 + 光影)
                 </h2>
                 <p className="text-xs text-slate-400 mb-4">
-                   使用 <code>orthographic</code> 視角與 <code>mesh3d</code> 光影，消除透視變形，呈現教科書級別的銳利拋物面。
+                   使用 <code>orthographic</code> 視角與 <code>mesh3d</code> 光影，消除透視變形；曲面為高中課綱常見之線性模型 <code className="text-slate-300">z = x + y</code>。
                 </p>
                 <div
                   id={funcPlotId}

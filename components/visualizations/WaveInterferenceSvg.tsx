@@ -35,7 +35,7 @@ function buildSumPath(
   phaseOffsetRad: number
 ): string {
   const steps = 160;
-  const a = amp * 0.55;
+  const a = amp * 0.5;
   const parts: string[] = [];
   for (let s = 0; s <= steps; s++) {
     const t = s / steps;
@@ -59,9 +59,9 @@ export const WaveInterferenceSvg: React.FC<WaveInterferenceSvgProps> = ({
   const cycles = 3;
   const A = Math.min(48, Math.max(8, amplitude));
 
-  const p1 = useMemo(() => buildSinePath(W, mid, A * 0.55, cycles, 0), [W, mid, A, cycles]);
+  const p1 = useMemo(() => buildSinePath(W, mid, A * 0.5, cycles, 0), [W, mid, A, cycles]);
   const p2 = useMemo(
-    () => buildSinePath(W, mid, A * 0.55, cycles, phaseOffsetRad),
+    () => buildSinePath(W, mid, A * 0.5, cycles, phaseOffsetRad),
     [W, mid, A, cycles, phaseOffsetRad]
   );
   const pSum = useMemo(

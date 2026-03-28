@@ -13,6 +13,7 @@ import {
 import { StrategyFactory } from "./strategies/StrategyFactory";
 import { allocateStemSubQuartetFromEarned } from "./utils/mathScoringUtils";
 import { dedupeStemSubResultsBySubId } from "./utils/dedupeStemSubResults";
+import { normalizePhase3StemSubResultsForDisplay } from "./utils/stemPhase3DisplayNormalize";
 import { TEACH_FRAMEWORK_PROMPT } from "./utils/systemPrompt";
 
 const STRICT_MATH_FORMAT_RULES = `You are an expert STEM tutor and a strict JSON API worker. Your outputs are rendered by KaTeX on the frontend. You MUST strictly adhere to the following LaTeX formatting rules to prevent parsing errors ("Math rendering failed"). Failure to follow these rules will crash the application.
@@ -1221,6 +1222,7 @@ export async function runModeratorSynthesis(
     for (const sub of parsed.stem_sub_results as { key_molecules_smiles?: unknown }[]) {
       if (!Array.isArray(sub.key_molecules_smiles)) sub.key_molecules_smiles = [];
     }
+    normalizePhase3StemSubResultsForDisplay(parsed, subjectName);
     if (/物理|physics/i.test(subjectName)) {
       normalizePhysicsStemSubScoresFromModerator(parsed as Record<string, unknown>);
     }
@@ -1481,7 +1483,9 @@ export async function generateReferenceSolution(
         }, 1, 1000),
         proWaitMs
       );
-      return safeJsonParse(result.text) || {};
+      const refParsed = safeJsonParse(result.text) || {};
+      normalizePhase3StemSubResultsForDisplay(refParsed, subjectName);
+      return refParsed;
   } catch (e) {
       if (import.meta.env.DEV) {
         console.debug('[generateReferenceSolution] Pro 逾時或失敗，改以 Flash 模型重試', e);
@@ -1496,7 +1500,9 @@ export async function generateReferenceSolution(
           maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
         }
       }, 4, 2000);
-      return safeJsonParse(result.text) || {};
+      const refParsedFlash = safeJsonParse(result.text) || {};
+      normalizePhase3StemSubResultsForDisplay(refParsedFlash, subjectName);
+      return refParsedFlash;
   }
  }
 export async function analyzeChineseSection(
