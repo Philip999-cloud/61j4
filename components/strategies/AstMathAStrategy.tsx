@@ -496,6 +496,9 @@ const AstMathAStrategy: React.FC<Props> = ({
             const zh = zeroCompressionHasContent(sub.zero_compression);
             const cc = sub.correct_calculation;
             const showCc = !!(cc && (!zh || isAstMathA || isBiologyStem));
+            const ccStrForHint =
+              typeof cc === 'string' ? cc.trim() : '';
+            const ceecHintSample = buildCeecExampleFormatHint(sub, isAstMathA);
             fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b21aa6' },
@@ -520,6 +523,29 @@ const AstMathAStrategy: React.FC<Props> = ({
                 timestamp: Date.now(),
               }),
             }).catch(() => {});
+            // #region agent log
+            if (isBiologyStem) {
+              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
+                body: JSON.stringify({
+                  sessionId: '42c4c3',
+                  runId: 'pre-fix',
+                  hypothesisId: 'H2',
+                  location: 'AstMathAStrategy.tsx:bioCeecHintVsCalc',
+                  message: 'biology CEEC hint cap vs full correct_calculation',
+                  data: {
+                    idx,
+                    fullCalcLen: ccStrForHint.length,
+                    ceecExampleHintLen: ceecHintSample.length,
+                    fullCalcHintFlag: isAstMathA,
+                    hintTruncatesCalc: !isAstMathA && ccStrForHint.length > 900,
+                  },
+                  timestamp: Date.now(),
+                }),
+              }).catch(() => {});
+            }
+            // #endregion
           }
           // #endregion
 
@@ -982,7 +1008,7 @@ const AstMathAStrategy: React.FC<Props> = ({
               <CeecAnswerSheetFooter
                 spec={sub.ceec_answer_sheet ?? undefined}
                 subId={sub.sub_id}
-                exampleFormatHint={buildCeecExampleFormatHint(sub, isAstMathA)}
+                exampleFormatHint={buildCeecExampleFormatHint(sub, isAstMathA || isBiologyStem)}
               />
               <MicroLessonBlock lesson={sub.micro_lesson} />
             </div>

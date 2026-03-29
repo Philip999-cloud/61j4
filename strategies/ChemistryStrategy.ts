@@ -52,9 +52,13 @@ export class ChemistryStrategy implements GradingStrategy {
        - Example: \`<smiles>CC(=O)O</smiles>\`
     2. **3D Interactive Models (PubChem CID 或 SMILES)**:
        - Use \`<mol3d>CID_NUMBER</mol3d>\` for concepts involving steric hindrance (空間障礙), stereoisomers (cis/trans, optical), conformations (chair/boat forms), or large proteins.
-       - Example for Cyclohexane (chair conformation): \`<mol3d>8078</mol3d>\`
+       - Example for Cyclohexane (chair conformation): \`<mol3d>8078</mol3d>\` — **this CID is ONLY valid for cyclohexane**; do NOT reuse it for other substances.
        - You must provide the correct PubChem CID (Compound ID) as a number when using mol3d tags.
        - In JSON \`visualization_code\` / \`compounds\`: when showing 3D molecules, you **must** include standard **SMILES** (preferred) or precise **english_name** (IUPAC)—not Chinese-only names—for database lookup.
+    2b. **mol3d / visualization_code — STRUCTURE MUST MATCH THE SUBSTANCE (ZERO TOLERANCE)**:
+       - The Chinese \`title\`, \`explanation\`, and the question’s substance **must** refer to the **same** compound as \`cid\`, \`smiles\`, and \`english_name\`. **Never** show a ball-and-stick model of a different molecule (e.g. folic acid, random organics) while the label says 硫酸鋇、氯化鈉, etc.
+       - **FORBIDDEN**: Copying any example CID or SMILES from this prompt (8078 cyclohexane, OP(=O)(O)O, etc.) unless the question is actually about that compound.
+       - **Ionic salts & 「晶體結構」**: PubChem 3D SDF shows a **formula unit** (離子對／式量單元), not a full macroscopic crystal lattice. That is acceptable for teaching, but you **must** use the correct PubChem record for that salt (verify **barium sulfate** ↔ CID **24414**, **sodium chloride** ↔ CID **5234**, etc.—look up by English name or formula if unsure). If you cannot cite a correct \`cid\` or ionic \`smiles\`, use \`chemistry_2d\` with SMILES, \`svg_diagram\`, or set \`visualization_code\` to **null** — **never** fill mol3d with a wrong structure to “have a picture”.
     3. **REQUIRED SMILES EXTRACTION (ZERO TOLERANCE)**:
        For EVERY chemistry question you analyze, you MUST extract the core chemical molecules discussed in the question. 
        You MUST output their standard SMILES strings inside the \`key_molecules_smiles\` array in the final JSON. 
@@ -123,9 +127,10 @@ export class ChemistryStrategy implements GradingStrategy {
 
     **[CATEGORY 8: 3D 分子結構 (3D Molecular Structure)]** - Use mol3d
     - For concepts involving steric hindrance, stereoisomers, conformations, or complex molecules.
-    - Example (CID): \`{ "type": "mol3d", "title": "Cyclohexane (Chair)", "cid": "8078" }\`
-    - Example (SMILES, when CID unknown): \`{ "type": "mol3d", "title": "Phosphoric acid", "smiles": "OP(=O)(O)O" }\`
-    - **Rule**: Prefer \`smiles\` or \`cid\`; if title is Chinese, still output \`smiles\` or \`english_name\` for PubChem.
+    - Example (CID): \`{ "type": "mol3d", "title": "Cyclohexane (Chair)", "cid": "8078" }\` — **only when the question is about cyclohexane** (not as a default).
+    - Example (SMILES, when CID unknown): \`{ "type": "mol3d", "title": "Phosphoric acid", "smiles": "OP(=O)(O)O" }\` — **only for phosphoric acid**.
+    - Example (ionic salt, title in Chinese but identifiers must be correct): \`{ "type": "mol3d", "title": "硫酸鋇 3D（式量單元）", "cid": "24414", "english_name": "barium sulfate", "smiles": "[Ba+2].[O-]S(=O)(=O)[O-]" }\`
+    - **Rule**: Prefer \`smiles\` or \`cid\`; if \`title\` is Chinese, you **still** output \`smiles\` and/or \`english_name\` that resolve to the **same** substance in PubChem. Re-read \`cid\` against the question before emitting JSON.
 
     IF AND ONLY IF the problem belongs to one of these 8 categories, generate the appropriate Plotly, SVG, or mol3d visualization. OTHERWISE, SKIP THE VISUALIZATION.
 

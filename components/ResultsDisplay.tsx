@@ -483,11 +483,11 @@ const ResultsDisplay: React.FC<Props> = ({
           : null;
       fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b21aa6' },
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
         body: JSON.stringify({
-          sessionId: 'b21aa6',
-          runId: 'post-fix',
-          hypothesisId: 'H4-H5',
+          sessionId: '42c4c3',
+          runId: 'pre-fix',
+          hypothesisId: 'H3-H4',
           location: 'ResultsDisplay.tsx:bioStemGate',
           message: 'biology results wiring',
           data: {
@@ -495,7 +495,12 @@ const ResultsDisplay: React.FC<Props> = ({
             stemSubResultsLen,
             stemBlockWouldRender,
             remarksZhType: typeof rz,
+            remarksZhLen: typeof rz === 'string' ? rz.length : -1,
             sub0FeedbackType: sub0 ? typeof (sub0 as { feedback?: unknown }).feedback : 'no-sub0',
+            sub0FeedbackLen:
+              sub0 && typeof (sub0 as { feedback?: string }).feedback === 'string'
+                ? (sub0 as { feedback: string }).feedback.length
+                : -1,
             zc0KeyTypes: zc0
               ? ['given', 'formula', 'substitute', 'derive', 'answer']
                   .map((k) => `${k}:${typeof zc0[k]}`)

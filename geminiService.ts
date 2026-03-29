@@ -1206,6 +1206,10 @@ export async function runModeratorSynthesis(
     if (isMultimodalContents || stemPhase3HighOutput || compoundsSchemaByName) {
       proWaitMs = Math.max(proWaitMs, 360_000);
     }
+    /** 實測 Console：生物 Phase3 Pro 在 360000ms 整點逾時後降級 Flash；略延長以降低「剛好斷在上限」的誤判 */
+    if (subjectId === AST_BIOLOGY_PHASE3_SUBJECT_ID) {
+      proWaitMs = Math.max(proWaitMs, 480_000);
+    }
     result = await withTimeout(
       generateContentWithRetry(ai, {
         model: 'gemini-3.1-pro-preview',
@@ -1217,6 +1221,25 @@ export async function runModeratorSynthesis(
   } catch (e) {
     const fallbackReason = e instanceof Error ? e.message : String(e);
     console.warn('[runModeratorSynthesis] Pro 逾時或失敗，改以 Flash 模型重試:', fallbackReason);
+    // #region agent log
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
+      body: JSON.stringify({
+        sessionId: '42c4c3',
+        runId: 'post-timeout-tweak',
+        hypothesisId: 'H1',
+        location: 'geminiService.ts:runModeratorSynthesis:proCatch',
+        message: 'Pro failed; Flash fallback',
+        data: {
+          subjectId: subjectId ?? null,
+          subjectName,
+          fallbackReason,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     // Fallback: Flash (High persistence: 4 retries)
     result = await generateContentWithRetry(ai, {
       model: GEMINI_FLASH_FALLBACK_MODEL,
@@ -1419,11 +1442,11 @@ export async function runModeratorSynthesis(
           : null;
       fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fb2a55' },
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
         body: JSON.stringify({
-          sessionId: 'fb2a55',
-          runId: 'post-fix',
-          hypothesisId: 'H1-H5',
+          sessionId: '42c4c3',
+          runId: 'pre-fix',
+          hypothesisId: 'H1',
           location: 'geminiService.ts:runModeratorSynthesis:biologyExit',
           message: 'biology phase3 parse and token shape',
           data: {
@@ -1442,6 +1465,14 @@ export async function runModeratorSynthesis(
             sub0result: s0?.result,
             sub0logic: s0?.logic,
             textTail: rt.slice(-140),
+            sub0feedbackLen:
+              s0 && typeof (s0 as { feedback?: unknown }).feedback === 'string'
+                ? (s0 as { feedback: string }).feedback.length
+                : null,
+            sub0correctCalcLen:
+              s0 && typeof (s0 as { correct_calculation?: unknown }).correct_calculation === 'string'
+                ? (s0 as { correct_calculation: string }).correct_calculation.length
+                : null,
           },
           timestamp: Date.now(),
         }),
