@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import Plotly from 'plotly.js-dist';
 
 export type StemXYChartKind = 'line' | 'scatter';
@@ -20,6 +20,21 @@ function coerceNums(a: unknown[]): number[] {
   });
 }
 
+function subscribeHtmlDarkClass(onStoreChange: () => void): () => void {
+  const el = document.documentElement;
+  const obs = new MutationObserver(() => onStoreChange());
+  obs.observe(el, { attributes: true, attributeFilter: ['class'] });
+  return () => obs.disconnect();
+}
+
+function getHtmlDarkClassSnapshot(): boolean {
+  return document.documentElement.classList.contains('dark');
+}
+
+function getHtmlDarkClassServerSnapshot(): boolean {
+  return false;
+}
+
 export const StemXYChart: React.FC<StemXYChartProps> = ({
   chartKind,
   x,
@@ -29,9 +44,34 @@ export const StemXYChart: React.FC<StemXYChartProps> = ({
   title,
   caption: _caption,
 }) => {
-  const chartId = useRef(`stemxy-${Math.random().toString(36).slice(2, 10)}`);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const isDarkClass = useSyncExternalStore(
+    subscribeHtmlDarkClass,
+    getHtmlDarkClassSnapshot,
+    getHtmlDarkClassServerSnapshot,
+  );
+
+  const plotInputsSig = useMemo(() => {
+    try {
+      return JSON.stringify({
+        chartKind,
+        x,
+        y,
+        xAxisTitle: xAxisTitle ?? null,
+        yAxisTitle: yAxisTitle ?? null,
+        title: title ?? null,
+        isDarkClass,
+      });
+    } catch {
+      return `${chartKind}|${String(x)}|${String(y)}|${isDarkClass}`;
+    }
+  }, [chartKind, x, y, xAxisTitle, yAxisTitle, title, isDarkClass]);
 
   useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
     const xs = coerceNums(x);
     const ys = coerceNums(y);
     const n = Math.min(xs.length, ys.length, 512);
@@ -43,9 +83,27 @@ export const StemXYChart: React.FC<StemXYChartProps> = ({
         yf.push(ys[i]);
       }
     }
-    if (xf.length < 1) return;
 
-    const isDark = document.documentElement.classList.contains('dark');
+    let cancelled = false;
+    let resizeRo: ResizeObserver | null = null;
+
+    const purgeEl = () => {
+      try {
+        if (el) Plotly.purge(el);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    if (xf.length < 1) {
+      purgeEl();
+      return () => {
+        cancelled = true;
+        purgeEl();
+      };
+    }
+
+    const isDark = isDarkClass;
     const axisColor = isDark ? '#d4d4d8' : '#27272a';
     const gridColor = isDark ? '#3f3f46' : '#e4e4e7';
     const plotBg = isDark ? '#18181b' : '#fafafa';
@@ -89,39 +147,69 @@ export const StemXYChart: React.FC<StemXYChartProps> = ({
 
     const config = { responsive: true, displayModeBar: false };
 
-    try {
-      Plotly.newPlot(chartId.current, [trace], layout, config);
-    } catch (e) {
-      console.warn('[StemXYChart] Plotly error', e);
-    }
-
-    const el = document.getElementById(chartId.current);
     const relayout = () => {
       try {
-        if (el) Plotly.Plots.resize(el);
+        if (!cancelled && el) Plotly.Plots.resize(el);
       } catch {
         /* ignore */
       }
     };
-    const ro = el && new ResizeObserver(() => requestAnimationFrame(relayout));
-    if (el && ro) ro.observe(el);
+
+    const runNewPlot = () => {
+      if (cancelled || !el) return;
+      if (el.clientWidth < 2 || el.clientHeight < 2) return;
+      try {
+        Plotly.newPlot(el, [trace], layout, config);
+        requestAnimationFrame(() => {
+          if (!cancelled && el) {
+            try {
+              Plotly.Plots.resize(el);
+            } catch {
+              /* ignore */
+            }
+          }
+        });
+      } catch (e) {
+        console.warn('[StemXYChart] Plotly error', e);
+      }
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        runNewPlot();
+      });
+    });
+
+    resizeRo = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        if (cancelled || !el) return;
+        if (el.clientWidth < 2 || el.clientHeight < 2) return;
+        const gd = el as unknown as { data?: unknown };
+        const hasPlot = gd.data != null && Array.isArray(gd.data);
+        if (hasPlot) {
+          relayout();
+        } else {
+          runNewPlot();
+        }
+      });
+    });
+    resizeRo.observe(el);
     window.addEventListener('resize', relayout);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('resize', relayout);
-      ro?.disconnect();
-      try {
-        Plotly.purge(chartId.current);
-      } catch {
-        /* ignore */
-      }
+      resizeRo?.disconnect();
+      purgeEl();
     };
-  }, [chartKind, x, y, xAxisTitle, yAxisTitle, title]);
+    // plotInputsSig 已涵蓋 chartKind／座標／軸標題／標題／暗色
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plotInputsSig]);
 
   return (
     <div className="w-full space-y-1">
       <div
-        id={chartId.current}
+        ref={containerRef}
         data-asea-will-read-frequently
         className="w-full h-full min-h-[280px] sm:min-h-[320px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-[var(--bg-main)] shadow-inner"
       />

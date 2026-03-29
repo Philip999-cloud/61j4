@@ -15,6 +15,39 @@ describe('validateStemVisualization', () => {
     ).toBe(true);
   });
 
+  it('accepts stem_xy_chart scatter with a single point', () => {
+    expect(
+      validateVisualizationItem({
+        type: 'stem_xy_chart',
+        chart_kind: 'scatter',
+        x: [1.5],
+        y: [2],
+      }).valid
+    ).toBe(true);
+  });
+
+  it('accepts stem_xy_chart line with chart_kind case variants', () => {
+    expect(
+      validateVisualizationItem({
+        type: 'stem_xy_chart',
+        chart_kind: 'Line',
+        x: [0, 1],
+        y: [0, 2],
+      }).valid
+    ).toBe(true);
+  });
+
+  it('rejects stem_xy_chart line with only one point', () => {
+    expect(
+      validateVisualizationItem({
+        type: 'stem_xy_chart',
+        chart_kind: 'line',
+        x: [0],
+        y: [0],
+      }).valid
+    ).toBe(false);
+  });
+
   it('rejects titration_curve with short arrays', () => {
     expect(
       validateVisualizationItem({

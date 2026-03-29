@@ -83,6 +83,13 @@ function stableStringifyForVizFingerprint(v: unknown): string {
   }
 }
 
+/** Plotly／StemXY 區塊避免僅用 idx 導致列表變動時實例錯接 */
+function stemPlotlyVizReactKey(vizType: string, idx: number, viz: unknown): string {
+  const fp = stableStringifyForVizFingerprint(viz);
+  const slice = fp.length <= 100 ? fp : fp.slice(0, 100);
+  return `${vizType}-${idx}-${slice}`;
+}
+
 function subscribeHtmlDarkClass(onStoreChange: () => void): () => void {
   const el = document.documentElement;
   const obs = new MutationObserver(() => onStoreChange());
@@ -1702,7 +1709,7 @@ export const VisualizationRenderer: React.FC<{
           try {
             if (viz.type === 'plotly_chart') {
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={stemPlotlyVizReactKey(viz.type, idx, viz)} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                     <div className="mb-3 flex justify-between items-center px-1">
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>{viz.title || 'Mathematical Model'}</h5>
                     </div>
@@ -1810,7 +1817,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parsePhase3StemXY(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={stemPlotlyVizReactKey(viz.type, idx, viz)} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -1837,7 +1844,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseTitrationCurve(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={stemPlotlyVizReactKey(viz.type, idx, viz)} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />

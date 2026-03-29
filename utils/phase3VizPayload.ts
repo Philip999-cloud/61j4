@@ -75,14 +75,18 @@ export function parsePhase3Snell(viz: Record<string, unknown>): Phase3SnellPaylo
 }
 
 export function parsePhase3StemXY(viz: Record<string, unknown>): Phase3StemXYChartPayload | null {
-  const kind = viz.chart_kind ?? viz.chartKind;
-  if (kind !== 'line' && kind !== 'scatter') return null;
+  const rawKind = viz.chart_kind ?? viz.chartKind;
+  const normalized =
+    typeof rawKind === 'string' ? rawKind.trim().toLowerCase() : '';
+  if (normalized !== 'line' && normalized !== 'scatter') return null;
+  const chart_kind = normalized as 'line' | 'scatter';
   const x = numArr(viz.x, 512);
   const y = numArr(viz.y, 512);
-  if (x.length < 2 || y.length < 2) return null;
   const n = Math.min(x.length, y.length);
+  if (n < 1) return null;
+  if (chart_kind === 'line' && n < 2) return null;
   return {
-    chart_kind: kind,
+    chart_kind,
     x: x.slice(0, n),
     y: y.slice(0, n),
     x_axis_title:
