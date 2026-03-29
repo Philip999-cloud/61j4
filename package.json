@@ -15,7 +15,7 @@
     "preview": "vite preview",
     "release:web": "vite build",
     "preview:release": "vite preview",
-    "serve:laptop": "npx --yes serve ../asea-laptop-test -l 4174 -s",
+    "serve:laptop": "npx --yes serve -s -l 4174 ../asea-laptop-test",
     "serve:laptop:preview": "vite preview --outDir ../asea-laptop-test --port 4174 --host",
     "serve:dist": "vite preview --port 4173",
     "check:release-env": "node scripts/check-release-env.mjs",

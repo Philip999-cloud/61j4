@@ -385,6 +385,8 @@ function isVizRendererContentRenderable(
   const v = content.visualizations;
   if (Array.isArray(v) && v.length > 0) {
     if (v.some((item: unknown) => vizListItemIsRenderable(item))) return true;
+    /** 模型已送 visualizations 但 strict 驗證全滅：仍掛載，讓內層 lenient／題幹幾何後備有機會畫圖 */
+    return true;
   }
 
   if (Array.isArray(content.compounds) && content.compounds.length > 0) return true;
@@ -509,7 +511,43 @@ function isParsedPayloadDisplayable(
   ) {
     return true;
   }
+  const pv = data.visualizations;
+  if (Array.isArray(pv) && pv.length > 0) return true;
   return false;
+}
+
+/**
+ * strict filter 全滅時，仍嘗試渲染常見物理／Plotly／SVG 形（略過 Zod 過嚴或 plotlyDataLooksRenderable 誤殺）。
+ */
+function lenientFallbackVizItems(raw: unknown[] | undefined | null): VisualizationItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VisualizationItem[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== 'object' || Array.isArray(it)) continue;
+    const o = it as Record<string, unknown>;
+    const t = o.type;
+    if (t === 'plotly_chart' && o.data != null) {
+      out.push(it as VisualizationItem);
+      continue;
+    }
+    if (typeof t === 'string' && PLOTLY_TRACE_TYPES.has(t) && (o.x != null || o.y != null || o.z != null)) {
+      out.push({
+        type: 'plotly_chart',
+        data: [o],
+        layout: o.layout,
+        title: (typeof o.title === 'string' && o.title.trim()) || (typeof o.name === 'string' && o.name.trim()) || 'Chart',
+        caption: typeof o.caption === 'string' ? o.caption : undefined,
+      } as VisualizationItem);
+      continue;
+    }
+    if (t === 'svg_diagram') {
+      const s =
+        (typeof o.svgCode === 'string' && o.svgCode.trim()) ||
+        (typeof o.code === 'string' && o.code.trim());
+      if (s) out.push(it as VisualizationItem);
+    }
+  }
+  return out;
 }
 
 // -------------------------------------------------------------------
@@ -1399,6 +1437,8 @@ export const VisualizationRenderer: React.FC<{
     const raw = vizPayload?.visualizations;
     const base = filterRenderableVisualizations(raw) as VisualizationItem[];
     if (base.length > 0) return base;
+    const lenient = lenientFallbackVizItems(raw as unknown[] | undefined);
+    if (lenient.length > 0) return lenient;
     if (
       allowPrefetchedGeometryFallback &&
       prefetchedGeometryJson != null &&
