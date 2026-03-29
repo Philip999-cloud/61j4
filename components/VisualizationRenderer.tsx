@@ -658,6 +658,11 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
     }
   }, [data, layout, title, caption, explanation, isDarkClass]);
 
+  const hasPlotlyTraces = useMemo(() => {
+    const t = normalizePlotlyData(data);
+    return Array.isArray(t) && t.length > 0;
+  }, [plotInputsSig, data]);
+
   useEffect(() => {
     setPlotlyWebGlNote(null);
     const rawTraces = normalizePlotlyData(data);
@@ -1138,6 +1143,53 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       }
     };
   }, [plotInputsSig]);
+
+  if (!hasPlotlyTraces) {
+    const hint =
+      explanation?.trim() || caption?.trim() || (typeof title === 'string' && title.trim());
+    // #region agent log
+    if (typeof fetch !== 'undefined') {
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
+        body: JSON.stringify({
+          sessionId: 'd7ef55',
+          location: 'VisualizationRenderer.tsx:PlotlyChart:noTracesUi',
+          message: 'plotly no renderable traces — showing text fallback',
+          data: {
+            hypothesisId: 'H-empty-plot',
+            hasExplanation: !!(explanation && explanation.trim()),
+            hasCaption: !!(caption && caption.trim()),
+            titleLen: typeof title === 'string' ? title.length : 0,
+          },
+          timestamp: Date.now(),
+          runId: 'post-fix',
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
+    return (
+      <div className="w-full max-w-full max-h-[min(72vh,560px)] overflow-auto space-y-2">
+        {hint ? (
+          <div className="min-h-[120px] rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] p-4 shadow-inner">
+            {title ? (
+              <div className="mb-2 text-sm font-bold text-[var(--text-primary)]">
+                <LatexRenderer content={String(title)} isInline />
+              </div>
+            ) : null}
+            {explanation?.trim() ? <LatexRenderer content={explanation} /> : null}
+            {caption?.trim() ? (
+              <p className="mt-3 text-center text-xs text-[var(--text-secondary)]">{caption}</p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200/90">
+            此圖表缺少可繪製的 Plotly 資料（trace 為空或格式無法辨識）。請重試批改，或改以題目圖／SVG 示意呈現。
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-full max-h-[min(72vh,560px)] overflow-auto space-y-1">
