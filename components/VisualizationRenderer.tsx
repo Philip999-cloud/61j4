@@ -517,7 +517,7 @@ function isParsedPayloadDisplayable(
 }
 
 /**
- * strict filter 全滅時，仍嘗試渲染常見物理／Plotly／SVG 形（略過 Zod 過嚴或 plotlyDataLooksRenderable 誤殺）。
+ * strict filter 全滅時，仍嘗試渲染常見物理／Plotly／SVG 形（略過 Zod 過嚴；plotly_chart 仍須通過 plotlyDataLooksRenderable，避免 data:[] 僅顯示標題）。
  */
 function lenientFallbackVizItems(raw: unknown[] | undefined | null): VisualizationItem[] {
   if (!Array.isArray(raw)) return [];
@@ -526,8 +526,31 @@ function lenientFallbackVizItems(raw: unknown[] | undefined | null): Visualizati
     if (!it || typeof it !== 'object' || Array.isArray(it)) continue;
     const o = it as Record<string, unknown>;
     const t = o.type;
-    if (t === 'plotly_chart' && o.data != null) {
-      out.push(it as VisualizationItem);
+    if (t === 'plotly_chart') {
+      // #region agent log
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
+        body: JSON.stringify({
+          sessionId: '09f966',
+          hypothesisId: 'H1',
+          location: 'VisualizationRenderer.tsx:lenientFallbackVizItems',
+          message: 'plotly_chart lenient candidate',
+          data: {
+            looksRenderable: plotlyDataLooksRenderable(o.data),
+            dataIsArray: Array.isArray(o.data),
+            dataLen: Array.isArray(o.data) ? o.data.length : null,
+            dataKeys:
+              o.data != null && typeof o.data === 'object' && !Array.isArray(o.data)
+                ? Object.keys(o.data as object).slice(0, 8)
+                : null,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      if (!plotlyDataLooksRenderable(o.data)) continue;
+      out.push(unwrapPlotlyChartVisualizationItem(it) as VisualizationItem);
       continue;
     }
     if (typeof t === 'string' && PLOTLY_TRACE_TYPES.has(t) && (o.x != null || o.y != null || o.z != null)) {
@@ -1099,6 +1122,25 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
   }, [plotInputsSig]);
 
   if (!hasPlotlyTraces) {
+    // #region agent log
+    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
+      body: JSON.stringify({
+        sessionId: '09f966',
+        hypothesisId: 'H2',
+        location: 'VisualizationRenderer.tsx:PlotlyChart',
+        message: 'no plotly traces after normalize',
+        data: {
+          hasTitle: !!(typeof title === 'string' && title.trim()),
+          normalizedNull: normalizePlotlyData(data) == null,
+          rawDataType: data == null ? 'null' : Array.isArray(data) ? 'array' : typeof data,
+          rawArrayLen: Array.isArray(data) ? data.length : null,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     const hint =
       explanation?.trim() || caption?.trim() || (typeof title === 'string' && title.trim());
     return (
