@@ -39,8 +39,24 @@ export function resolveStemDisciplineFromSubject(subjectName: string): StemDispl
   ) {
     return 'physics';
   }
-  if (inParen(/生物/i) || lower.includes('生物') || lower.includes('biology')) return 'biology';
-  if (inParen(/地科|地球/i) || lower.includes('地球科學') || lower.includes('地科') || lower.includes('earth science')) return 'earth';
+  if (
+    inParen(/生物/i) ||
+    s.includes('生物') ||
+    compactCJK.includes('生物') ||
+    lower.includes('biology')
+  ) {
+    return 'biology';
+  }
+  if (
+    inParen(/地科|地球/i) ||
+    s.includes('地科') ||
+    s.includes('地球科學') ||
+    compactCJK.includes('地科') ||
+    compactCJK.includes('地球科學') ||
+    lower.includes('earth science')
+  ) {
+    return 'earth';
+  }
   if (
     lower.includes('數學') ||
     lower.includes('calculus') ||
@@ -55,6 +71,14 @@ export function resolveStemDisciplineFromSubject(subjectName: string): StemDispl
   if (lower.includes('science') && !lower.includes('生物') && !lower.includes('化學') && !lower.includes('物理')) return 'integrated';
   /** 與舊版字卡一致：未辨識之 STEM 預設數理向度，避免誤用「綜合自然」文案 */
   return 'math';
+}
+
+/**
+ * 數學科保留上方四格（Setup/Process/Logic/Result）與進度條；
+ * 其餘理科 stem（物理／化學／生物／地科／自然跨科）與下方 transformToMathSteps 三向度同源，隱藏上排以免重複版面。
+ */
+export function stemSubjectHidesFourMetricRow(discipline: StemDisplayDiscipline): boolean {
+  return discipline !== 'math';
 }
 
 /**

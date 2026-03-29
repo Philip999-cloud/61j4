@@ -14,6 +14,7 @@ import {
   getStepIcon,
   resolveStemDisciplineForSub,
   resolveStemDisciplineFromSubject,
+  stemSubjectHidesFourMetricRow,
   stemDisplayDisciplineLabelZh,
 } from '../../utils/mathScoringUtils';
 import { VisualizationRenderer } from '../VisualizationRenderer';
@@ -440,9 +441,26 @@ const AstMathAStrategy: React.FC<Props> = ({
             ? `stem-${String(sub.sub_id)}`
             : `stem-idx-${idx}`;
         try {
-          /** 分科物理／化學：科目名稱與下方三向度同源，避免重複四格＋進度條；以 resolve 為準（含英文 Chemistry／Physics） */
+          /** 僅數學保留上排四格＋進度條；其餘 stem 學門見 stemSubjectHidesFourMetricRow。 */
           const stemSubjectBase = resolveStemDisciplineFromSubject(subjectName);
-          const hideFourMetricRow = stemSubjectBase === 'chemistry' || stemSubjectBase === 'physics';
+          const hideFourMetricRow = stemSubjectHidesFourMetricRow(stemSubjectBase);
+          // #region agent log
+          if (idx === 0 && hideFourMetricRow && typeof fetch !== 'undefined') {
+            fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'ce64d5' },
+              body: JSON.stringify({
+                sessionId: 'ce64d5',
+                runId: 'post-fix',
+                hypothesisId: 'H1',
+                location: 'AstMathAStrategy.tsx:hideFourMetricRow',
+                message: 'non-math stem duplicate-UI guard',
+                data: { stemSubjectBase, hideFourMetricRow },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {});
+          }
+          // #endregion
 
           const stemDiscipline = resolveStemDisciplineForSub(subjectName, sub);
           const stemDisciplineZh = stemDisplayDisciplineLabelZh(stemDiscipline);
@@ -689,9 +707,13 @@ const AstMathAStrategy: React.FC<Props> = ({
                     type: 'geometry_json',
                     code: prefetchedQuestionGeometry,
                   });
-                /** 題幹預抓幾何：多列題組僅第一列後備，避免每小題重複同一張母題圖 */
+                /**
+                 * 題幹預抓幾何後備：數學維持「多列題組僅首列」避免同一母題圖洗版；
+                 * 分科物理依 SUB-QUESTION VISUALIZATION MANDATE — 每子題皆應有視覺化，故每列皆可掛題幹示意圖。
+                 */
                 const prefetchFallbackThisSub =
-                  prefetchOk && (rows.length <= 1 || idx === 0);
+                  prefetchOk &&
+                  (stemSubjectBase === 'physics' || rows.length <= 1 || idx === 0);
 
                 let visualizationContent: typeof rawVc | {
                   explanation: string;
@@ -707,15 +729,16 @@ const AstMathAStrategy: React.FC<Props> = ({
                     typeof rawVcObj?.explanation === 'string' && rawVcObj.explanation.trim()
                       ? rawVcObj.explanation.trim()
                       : `【${subLabel}】以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。`;
+                  const geoViz = {
+                    type: 'geometry_json' as const,
+                    title: questionFigureTitle,
+                    code: prefetchedQuestionGeometry,
+                  };
+                  /** 保留模型原始 visualizations，供 VisualizationRenderer lenient 再嘗試（例如 plotly 形狀邊界） */
                   visualizationContent = {
                     explanation,
-                    visualizations: [
-                      {
-                        type: 'geometry_json',
-                        title: questionFigureTitle,
-                        code: prefetchedQuestionGeometry,
-                      },
-                    ],
+                    visualizations:
+                      rawItems.length > 0 ? [geoViz, ...rawItems] : [geoViz],
                   };
                 } else if (rawVcObj != null) {
                   const hasModelGeometry = renderableFromModel.some(
@@ -882,7 +905,8 @@ const AstMathAStrategy: React.FC<Props> = ({
                        prefetchedGeometryJson={prefetchedQuestionGeometry}
                        onRetryExtraction={onRetryQuestionGeometryExtraction}
                        allowPrefetchedGeometryFallback={
-                         stemUsesQuestionGeometry && (rows.length <= 1 || idx === 0)
+                         stemUsesQuestionGeometry &&
+                         (stemSubjectBase === 'physics' || rows.length <= 1 || idx === 0)
                        }
                        prefetchedGeometryVizTitle={
                          stemUsesQuestionGeometry
