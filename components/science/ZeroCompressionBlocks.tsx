@@ -38,6 +38,7 @@ interface Props {
 }
 
 export const ZeroCompressionBlocks: React.FC<Props> = ({ steps, isSolutionOnly }) => {
+  const substituteDebugKeyRef = React.useRef('');
   return (
     <div className="mt-8 relative z-10 bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
       <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">
@@ -48,6 +49,33 @@ export const ZeroCompressionBlocks: React.FC<Props> = ({ steps, isSolutionOnly }
         {STEP_META.map(({ key, title, dot }) => {
           const raw = steps[key];
           const text = zeroCompressionStepDisplayText(raw);
+          // #region agent log
+          if (key === 'substitute' && text && typeof fetch !== 'undefined') {
+            const marker = '理論上彈性碰撞';
+            const dbgKey = `${text.length}\0${text.slice(0, 120)}`;
+            if (substituteDebugKeyRef.current !== dbgKey) {
+              substituteDebugKeyRef.current = dbgKey;
+              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
+                body: JSON.stringify({
+                  sessionId: '09f966',
+                  runId: 'pre-fix',
+                  hypothesisId: 'H2-H4',
+                  location: 'ZeroCompressionBlocks.tsx:substitute',
+                  message: 'substitute rendered text',
+                  data: {
+                    displayLen: text.length,
+                    rawIsArray: Array.isArray(raw),
+                    rawArrayLen: Array.isArray(raw) ? raw.length : null,
+                    phraseRepeatCount: text.split(marker).length - 1,
+                  },
+                  timestamp: Date.now(),
+                }),
+              }).catch(() => {});
+            }
+          }
+          // #endregion
           return (
             <div
               key={key}

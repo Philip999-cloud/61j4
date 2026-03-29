@@ -899,8 +899,10 @@ export async function runModeratorSynthesis(
   fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H2',location:'geminiService.ts:runModeratorSynthesis:contents',message:'phase3 payload shape',data:{subjectId:subjectId??null,subjectName,useMultimodal,hasVisionUrls,inlinePartCount,contentLen:content.length,contentPreview:content.slice(0,400)},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
 
-  const physicsStemGradeRequired = /物理|physics/i.test(subjectName);
-  
+  /** 與物理相同：compounds schema 下若未標 required，Flash 常省略 max_points／feedback，致 UI 出現 MAX「—」與閱卷點評空白（見生物 Q48） */
+  const stemSubItemStemGradeRequired =
+    /物理|physics/i.test(subjectName) || /生物|biology/i.test(subjectName);
+
   const baseConfig = {
     responseMimeType: "application/json" as const,
     systemInstruction: buildSystemInstruction(systemInstruction, subjectName),
@@ -932,7 +934,7 @@ export async function runModeratorSynthesis(
             type: Type.ARRAY,
             items: {
               type: Type.OBJECT,
-              ...(physicsStemGradeRequired
+              ...(stemSubItemStemGradeRequired
                 ? { required: ['sub_id', 'setup', 'process', 'result', 'logic', 'max_points', 'feedback'] }
                 : {}),
               properties: {
@@ -1327,6 +1329,28 @@ export async function runModeratorSynthesis(
       if (!Array.isArray(sub.key_molecules_smiles)) sub.key_molecules_smiles = [];
     }
     normalizePhase3StemSubResultsForDisplay(parsed, subjectName);
+    if (/生物|biology/i.test(subjectName) && Array.isArray(parsed.stem_sub_results)) {
+      const rootMax = Number((parsed as { max_score?: unknown }).max_score);
+      const n = parsed.stem_sub_results.length || 1;
+      const perSub =
+        Number.isFinite(rootMax) && rootMax > 0 ? Math.max(1, rootMax / n) : 5;
+      const rz =
+        typeof (parsed as { remarks_zh?: unknown }).remarks_zh === 'string'
+          ? (parsed as { remarks_zh: string }).remarks_zh.trim()
+          : '';
+      for (const raw of parsed.stem_sub_results as Record<string, unknown>[]) {
+        const mp = raw.max_points;
+        if (typeof mp !== 'number' || !Number.isFinite(mp) || mp <= 0) {
+          raw.max_points = perSub;
+        }
+        const fb = raw.feedback;
+        if (typeof fb !== 'string' || !fb.trim()) {
+          raw.feedback =
+            rz ||
+            '本子題未取得閱卷官點評；請參考上方主席綜評，或重新批改。';
+        }
+      }
+    }
     if (/物理|physics/i.test(subjectName)) {
       normalizePhysicsStemSubScoresFromModerator(parsed as Record<string, unknown>);
     }
@@ -1364,6 +1388,33 @@ export async function runModeratorSynthesis(
         vc && typeof vc === 'object' && !Array.isArray(vc) && Array.isArray((vc as { visualizations?: unknown }).visualizations)
           ? (vc as { visualizations: unknown[] }).visualizations[0]
           : null;
+      const zc = s0.zero_compression as Record<string, unknown> | undefined;
+      const subRaw = zc?.substitute;
+      const subPhrase = '理論上彈性碰撞';
+      const subStrLen = typeof subRaw === 'string' ? subRaw.length : 0;
+      const subPhraseCount =
+        typeof subRaw === 'string' ? subRaw.split(subPhrase).length - 1 : 0;
+      // #region agent log
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
+        body: JSON.stringify({
+          sessionId: '09f966',
+          runId: 'pre-fix',
+          hypothesisId: 'H1-H2-H5',
+          location: 'geminiService.ts:runModeratorSynthesis:physicsSubstitute',
+          message: 'phase3 zero_compression.substitute shape',
+          data: {
+            substituteKind:
+              subRaw == null ? 'null' : Array.isArray(subRaw) ? 'array' : typeof subRaw,
+            substituteArrayLen: Array.isArray(subRaw) ? subRaw.length : null,
+            substituteStringLen: subStrLen,
+            phraseRepeatCount: subPhraseCount,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
