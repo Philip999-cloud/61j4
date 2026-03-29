@@ -1,6 +1,11 @@
 import React, { useMemo } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
-import { isParsableAiSvgMarkup, PhysicsRenderer, sanitizeAiSvgCode } from './PhysicsRenderer';
+import {
+  isParsableAiSvgMarkup,
+  PhysicsRenderer,
+  sanitizeAiSvgCode,
+  tryRepairAiSvgMarkupForDisplay,
+} from './PhysicsRenderer';
 
 /**
  * Campbell 級教材 SVG：先 DOMPurify（與 PhysicsRenderer 相同設定）再 DOMParser 驗證，避免 XSS 與不合法 XML 導致白屏；
@@ -11,7 +16,11 @@ export const SmartSvg: React.FC<{ svgCode: string; className?: string }> = ({ sv
     () => sanitizeAiSvgCode(typeof svgCode === 'string' ? svgCode : String(svgCode ?? '')),
     [svgCode]
   );
-  const svgValid = useMemo(() => isParsableAiSvgMarkup(cleanSvg), [cleanSvg]);
+  const displaySvg = useMemo(() => {
+    if (isParsableAiSvgMarkup(cleanSvg)) return cleanSvg;
+    return tryRepairAiSvgMarkupForDisplay(cleanSvg);
+  }, [cleanSvg]);
+  const svgValid = displaySvg.length > 0;
 
   if (!svgValid) {
     return (
@@ -29,7 +38,7 @@ export const SmartSvg: React.FC<{ svgCode: string; className?: string }> = ({ sv
     <div
       className="smart-svg-foreignobject-safe flex w-full min-h-[200px] flex-col items-stretch justify-center overflow-x-auto overflow-y-visible [&_.physics-renderer-root]:w-full [&_.physics-renderer-root]:overflow-x-auto [&_.physics-renderer-root]:overflow-y-visible"
     >
-      <PhysicsRenderer svgCode={cleanSvg} preserveDiagramColors className={className} />
+      <PhysicsRenderer svgCode={displaySvg} preserveDiagramColors className={className} />
     </div>
   );
 };

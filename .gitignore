@@ -43,3 +43,6 @@ public/fonts/
 
 # Android release builds (regenerate with Gradle)
 *.apk
+
+# Local JDK path notes (machine-specific)
+java_home.txt

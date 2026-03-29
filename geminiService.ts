@@ -180,6 +180,15 @@ type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
 若題目不需要圖形輔助，可設為 null。
 `;
   }
+  if (!isChemistrySubject(subjectName) && /生物|biology/i.test(subjectName)) {
+    result += `
+
+# BIOLOGY — 頂層 compounds（JSON Schema 對齊）
+你的 JSON 回覆**頂層**必須包含 "compounds" 陣列（與化學科 schema 相同欄位）。
+- 題目若涉及有機分子、代謝物、試劑等可填 name／formula／smiles；無任何化合物或僅單質時輸出空陣列 "compounds": []。
+- 勿省略此鍵；省略將導致結構化輸出失敗。
+`;
+  }
   if (isMathStemSubject(subjectName)) {
     result += MATH_STEM_VIZ_APPENDIX;
   }
@@ -316,9 +325,9 @@ async function generateContentWithRetry(ai: GoogleGenAI, params: any, retries = 
  */
 function getProTimeoutMs(prompt: string): number {
   const len = typeof prompt === 'string' ? prompt.length : JSON.stringify(prompt).length;
-  if (len > 4000) return 240000; // 240 秒
-  if (len > 2000) return 180000; // 180 秒
-  return 120000; // 120 秒
+  if (len > 4000) return 360000; // 360 秒：STEM 高輸出科目（生物／物理／化學）需要較長時間
+  if (len > 2000) return 240000; // 240 秒
+  return 150000; // 150 秒
 }
 
 /**
@@ -832,7 +841,11 @@ export async function runModeratorSynthesis(
 
   if (strategy.getSystemPrompt) {
     systemInstruction = strategy.getSystemPrompt();
-    prompt = `
+    // 若策略同時定義了 generatePrompt，使用它產生更精準的 user prompt（如 BiologyStrategy）
+    if (strategy.generatePrompt) {
+      prompt = strategy.generatePrompt(content, audit, expert, instructions);
+    } else {
+      prompt = `
       Please grade the following student response based on the provided audit and expert analysis.
       
       Student Content: ${content}
@@ -840,6 +853,7 @@ export async function runModeratorSynthesis(
       Subject Expert Analysis: ${JSON.stringify(expert)}
       Additional Instructions: ${instructions || 'None'}
     `.trim();
+    }
   } else {
     prompt = strategy.generatePrompt!(content, audit, expert, instructions);
   }
@@ -1178,8 +1192,19 @@ export async function runModeratorSynthesis(
 
   let result;
   try {
-    // 與 generateReferenceSolution 一致：主席綜評至少給 Pro 3 分鐘，避免長題誤觸逾時後降級 Flash
-    const proWaitMs = Math.max(getProTimeoutMs(promptForTimeout), 180_000);
+    const isMultimodalContents =
+      typeof contents === 'object' &&
+      contents !== null &&
+      'parts' in contents &&
+      Array.isArray((contents as { parts?: unknown }).parts);
+    const stemPhase3HighOutput =
+      !!subjectId && STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS.has(subjectId);
+    const baseProMs = getProTimeoutMs(promptForTimeout);
+    // 多模態僅以文字計時會低估；高分科 Phase3 JSON 體積大，Pro 需更長等待以免誤降級 Flash
+    let proWaitMs = Math.max(baseProMs, 240_000);
+    if (isMultimodalContents || stemPhase3HighOutput) {
+      proWaitMs = Math.max(proWaitMs, 360_000);
+    }
     result = await withTimeout(
       generateContentWithRetry(ai, {
         model: 'gemini-3.1-pro-preview',
@@ -1224,6 +1249,44 @@ export async function runModeratorSynthesis(
     parsed = safeJsonParse(result.text);
   }
 
+  // Flash fallback 或 JSON 截斷：嘗試從不完整的 JSON 文字中搶救基本結構
+  if (parsed == null && result.text) {
+    const rawText = result.text;
+    console.warn('[runModeratorSynthesis] safeJsonParse returned null, attempting truncated JSON recovery...');
+    try {
+      // 嘗試從截斷的 JSON 中提取至少部分可用的結構
+      let partial = rawText.trim().replace(/^```(?:json)?|```$/g, '').trim();
+      // 找到最後一個完整的 } 或 ] 以截取可用部分
+      let braceDepth = 0;
+      let lastValidEnd = -1;
+      for (let ci = 0; ci < partial.length; ci++) {
+        const ch = partial[ci];
+        if (ch === '{') braceDepth++;
+        else if (ch === '}') {
+          braceDepth--;
+          if (braceDepth === 0) lastValidEnd = ci;
+        }
+      }
+      if (lastValidEnd > 0) {
+        const truncated = partial.slice(0, lastValidEnd + 1);
+        parsed = safeJsonParse(truncated);
+        if (parsed) {
+          console.log('[runModeratorSynthesis] Truncated JSON recovery succeeded');
+        }
+      }
+      // 進一步嘗試：補全截斷的 JSON
+      if (parsed == null) {
+        const repaired = jsonrepair(partial);
+        parsed = safeJsonParse(repaired);
+        if (parsed) {
+          console.log('[runModeratorSynthesis] jsonrepair recovery succeeded on raw text');
+        }
+      }
+    } catch (recoveryErr) {
+      console.warn('[runModeratorSynthesis] Truncated JSON recovery failed:', recoveryErr);
+    }
+  }
+
   if (parsed) {
     if (!parsed.detailed_fixes) parsed.detailed_fixes = [];
     if (!parsed.ceec_results) parsed.ceec_results = { total_score: 0, breakdown: {} };
@@ -1239,6 +1302,32 @@ export async function runModeratorSynthesis(
     normalizePhase3StemSubResultsForDisplay(parsed, subjectName);
     if (/物理|physics/i.test(subjectName)) {
       normalizePhysicsStemSubScoresFromModerator(parsed as Record<string, unknown>);
+    }
+
+    // Flash fallback 產出的 visualization_code 常為空殼（data:[] 或缺少 visualizations），嘗試修復
+    if (Array.isArray(parsed.stem_sub_results)) {
+      for (const sub of parsed.stem_sub_results as Record<string, unknown>[]) {
+        const vc = sub.visualization_code;
+        if (vc && typeof vc === 'object' && !Array.isArray(vc)) {
+          const vcObj = vc as Record<string, unknown>;
+          const vizArr = vcObj.visualizations;
+          if (Array.isArray(vizArr)) {
+            // 修復 plotly_chart 空 data
+            for (const v of vizArr as Record<string, unknown>[]) {
+              if (v.type === 'plotly_chart' && Array.isArray(v.data) && (v.data as unknown[]).length === 0) {
+                // 嘗試從 layout.title 或 x/y 根層級回填
+                if (Array.isArray(v.x) && Array.isArray(v.y) && (v.x as unknown[]).length > 0) {
+                  (v as Record<string, unknown>).data = [{ type: 'scatter', mode: 'lines+markers', x: v.x, y: v.y, name: (v as Record<string, unknown>).name || 'Data' }];
+                }
+              }
+            }
+          }
+          // 模型有時只回傳根層級 type（如 stem_xy_chart）但不包在 visualizations[] 中
+          if (typeof vcObj.type === 'string' && !vizArr) {
+            vcObj.visualizations = [{ ...vcObj }];
+          }
+        }
+      }
     }
     // #region agent log
     if (/物理|physics/i.test(subjectName) && parsed.stem_sub_results?.[0]) {
@@ -1482,8 +1571,8 @@ export async function generateReferenceSolution(
   // #endregion
   
   try {
-      // 標準詳解常含長篇 JSON／圖表：Pro 等待時間至少 3 分鐘，降低不必要降級 Flash
-      const proWaitMs = Math.max(getProTimeoutMs(refPromptForTimeout), 180_000);
+      // 標準詳解常含長篇 JSON／圖表：Pro 等待時間至少 4 分鐘，降低不必要降級 Flash
+      const proWaitMs = Math.max(getProTimeoutMs(refPromptForTimeout), 240_000);
       const result = await withTimeout(
         generateContentWithRetry(ai, {
           model: 'gemini-3.1-pro-preview',

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-// RDKit minimal WASM（內建 Cairo 繪圖）：路徑須與 vite 的 viteStaticCopy 輸出一致（dist 根目錄的 RDKit_minimal.wasm）
+// RDKit minimal WASM（2D 繪圖使用內嵌 Cairo，非獨立原生 Cairo 連結）：建置後與 index.html 同層之 RDKit_minimal.wasm（vite-plugin-static-copy）
 const getRDKitWasmPath = () => {
   if (typeof window !== 'undefined') {
     const base = import.meta.env.BASE_URL || './';

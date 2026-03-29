@@ -149,6 +149,28 @@ export function isParsableAiSvgMarkup(markup: string): boolean {
   }
 }
 
+/**
+ * 嚴格 image/svg+xml 解析失敗時，以 HTML 解析器容錯（未閉合標籤、命名空間邊界等），再抽出第一個 <svg> 並重新消毒。
+ * 僅供已過 sanitizeAiSvgCode 的字串使用，避免未消毒輸入進 HTML 解析路徑。
+ */
+export function tryRepairAiSvgMarkupForDisplay(sanitizedMarkup: string): string {
+  const t = typeof sanitizedMarkup === 'string' ? sanitizedMarkup.trim() : '';
+  if (!t || !/<svg\b/i.test(t)) return '';
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return '';
+  try {
+    const doc = new DOMParser().parseFromString(
+      `<div id="asea-svg-loose">${t}</div>`,
+      'text/html',
+    );
+    const svg = doc.querySelector('svg');
+    if (!svg) return '';
+    const serial = sanitizeAiSvgCode(svg.outerHTML);
+    return isParsableAiSvgMarkup(serial) ? serial : '';
+  } catch {
+    return '';
+  }
+}
+
 /** 供 VisualizationRenderer / SmartSvg 等先洗 XSS，再交 PhysicsRenderer（可重複呼叫，結果仍安全） */
 export function sanitizeAiSvgCode(raw: string): string {
   const extracted = extractFirstSvgFragment(raw);
