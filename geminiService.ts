@@ -1199,10 +1199,11 @@ export async function runModeratorSynthesis(
       Array.isArray((contents as { parts?: unknown }).parts);
     const stemPhase3HighOutput =
       !!subjectId && STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS.has(subjectId);
+    const compoundsSchemaByName = COMPOUNDS_SCHEMA_SUBJECTS.some((k) => subjectName.includes(k));
     const baseProMs = getProTimeoutMs(promptForTimeout);
     // 多模態僅以文字計時會低估；高分科 Phase3 JSON 體積大，Pro 需更長等待以免誤降級 Flash
     let proWaitMs = Math.max(baseProMs, 240_000);
-    if (isMultimodalContents || stemPhase3HighOutput) {
+    if (isMultimodalContents || stemPhase3HighOutput || compoundsSchemaByName) {
       proWaitMs = Math.max(proWaitMs, 360_000);
     }
     result = await withTimeout(
@@ -1288,6 +1289,9 @@ export async function runModeratorSynthesis(
   }
 
   if (parsed) {
+    if (COMPOUNDS_SCHEMA_SUBJECTS.some((k) => subjectName.includes(k)) && !Array.isArray(parsed.compounds)) {
+      (parsed as { compounds: unknown[] }).compounds = [];
+    }
     if (!parsed.detailed_fixes) parsed.detailed_fixes = [];
     if (!parsed.ceec_results) parsed.ceec_results = { total_score: 0, breakdown: {} };
     if (!parsed.stem_sub_results) parsed.stem_sub_results = [];
