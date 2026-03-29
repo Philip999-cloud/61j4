@@ -185,9 +185,6 @@ export const useGrading = () => {
 
       const combinedContent = `題目：${qText}\n詳解：${rText}\n學生：${sText}`;
       const rawStudentText = sText || combinedContent;
-      // #region agent log
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H5',location:'useGrading.ts:gradeStandardFromText:combined',message:'combined content snapshot',data:{subjectId:selectedSubject.id,subjectName:selectedSubject.name,hasStudentInput,qLen:qText.length,rLen:rText.length,sLen:sText.length,combinedLen:combinedContent.length,combinedPreview:combinedContent.slice(0,500),visionQ:visionImages?.question?.length??0,visionR:visionImages?.reference?.length??0,visionS:visionImages?.student?.length??0},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
 
       if (!hasStudentInput) {
         setGradingStatus('未偵測到學生作答，正在生成標準詳解...');
@@ -275,40 +272,6 @@ export const useGrading = () => {
             originalContent: rawStudentText,
             isSolutionOnly: false
           };
-          // #region agent log
-          try {
-            const stem0 = (moderator as any)?.stem_sub_results?.[0];
-            const vc = stem0?.visualization_code;
-            fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-              body: JSON.stringify({
-                sessionId: 'b584db',
-                location: 'useGrading.ts:gradeStandardFromText',
-                message: 'grading result stem snapshot',
-                data: {
-                  hypothesisId: 'H2',
-                  subject: dynamicSubjectName,
-                  originalContentLen: typeof rawStudentText === 'string' ? rawStudentText.length : 0,
-                  stemSubCount: Array.isArray((moderator as any)?.stem_sub_results)
-                    ? (moderator as any).stem_sub_results.length
-                    : 0,
-                  vizCodeType: vc && typeof vc === 'object' ? vc.type : typeof vc,
-                  hasVisualizationsArray: !!(vc && typeof vc === 'object' && Array.isArray(vc.visualizations)),
-                  vizArrayLen:
-                    vc && typeof vc === 'object' && Array.isArray(vc.visualizations)
-                      ? vc.visualizations.length
-                      : 0,
-                  firstVizType: vc?.visualizations?.[0]?.type,
-                },
-                timestamp: Date.now(),
-                runId: 'pre-fix',
-              }),
-            }).catch(() => {});
-          } catch {
-            /* ignore */
-          }
-          // #endregion
           setStandardResults(res);
           const realScore = (res as any).overallScore || (res as any).totalScore || (res as any).score || (res as any).grade || moderator.ceec_results?.total_score || moderator.final_score || '未提供';
           

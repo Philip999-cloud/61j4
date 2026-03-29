@@ -447,23 +447,6 @@ const AstMathAStrategy: React.FC<Props> = ({
           /** 僅數學保留上排四格＋進度條；其餘 stem 學門見 stemSubjectHidesFourMetricRow。 */
           const stemSubjectBase = resolveStemDisciplineFromSubject(subjectName);
           const hideFourMetricRow = stemSubjectHidesFourMetricRow(stemSubjectBase);
-          // #region agent log
-          if (idx === 0 && hideFourMetricRow && typeof fetch !== 'undefined') {
-            fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'ce64d5' },
-              body: JSON.stringify({
-                sessionId: 'ce64d5',
-                runId: 'post-fix',
-                hypothesisId: 'H1',
-                location: 'AstMathAStrategy.tsx:hideFourMetricRow',
-                message: 'non-math stem duplicate-UI guard',
-                data: { stemSubjectBase, hideFourMetricRow },
-                timestamp: Date.now(),
-              }),
-            }).catch(() => {});
-          }
-          // #endregion
 
           const stemDiscipline = resolveStemDisciplineForSub(subjectName, sub);
           const stemDisciplineZh = stemDisplayDisciplineLabelZh(stemDiscipline);
@@ -483,71 +466,6 @@ const AstMathAStrategy: React.FC<Props> = ({
             const m = Number(sub.max_points);
             return Number.isFinite(m) ? m : '—';
           })();
-
-          // #region agent log
-          if (idx === 0 && typeof fetch !== 'undefined') {
-            const zc = sub.zero_compression as Record<string, unknown> | undefined;
-            const zcFieldTypes =
-              zc && typeof zc === 'object' && !Array.isArray(zc)
-                ? (['given', 'formula', 'substitute', 'derive', 'answer'] as const)
-                    .map((k) => `${k}:${typeof zc[k]}`)
-                    .join('|')
-                : `zc:${zc == null ? 'null' : typeof zc}`;
-            const zh = zeroCompressionHasContent(sub.zero_compression);
-            const cc = sub.correct_calculation;
-            const showCc = !!(cc && (!zh || isAstMathA || isBiologyStem));
-            const ccStrForHint =
-              typeof cc === 'string' ? cc.trim() : '';
-            const ceecHintSample = buildCeecExampleFormatHint(sub, isAstMathA);
-            fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b21aa6' },
-              body: JSON.stringify({
-                sessionId: 'b21aa6',
-                runId: 'post-fix',
-                hypothesisId: 'H1-H3',
-                location: 'AstMathAStrategy.tsx:stemSub0',
-                message: 'bio stem row0 display path',
-                data: {
-                  subjectName,
-                  isBiologyStem,
-                  isAstMathA,
-                  stemSubjectBase,
-                  zeroHas: zh,
-                  zcFieldTypes,
-                  ccType: typeof cc,
-                  ccStrLen: typeof cc === 'string' ? cc.length : 0,
-                  showCorrectCalc: showCc,
-                  feedbackType: typeof sub.feedback,
-                },
-                timestamp: Date.now(),
-              }),
-            }).catch(() => {});
-            // #region agent log
-            if (isBiologyStem) {
-              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
-                body: JSON.stringify({
-                  sessionId: '42c4c3',
-                  runId: 'pre-fix',
-                  hypothesisId: 'H2',
-                  location: 'AstMathAStrategy.tsx:bioCeecHintVsCalc',
-                  message: 'biology CEEC hint cap vs full correct_calculation',
-                  data: {
-                    idx,
-                    fullCalcLen: ccStrForHint.length,
-                    ceecExampleHintLen: ceecHintSample.length,
-                    fullCalcHintFlag: isAstMathA,
-                    hintTruncatesCalc: !isAstMathA && ccStrForHint.length > 900,
-                  },
-                  timestamp: Date.now(),
-                }),
-              }).catch(() => {});
-            }
-            // #endregion
-          }
-          // #endregion
 
           return (
             <div key={`${stemRowKey}-${idx}`} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
@@ -675,33 +593,6 @@ const AstMathAStrategy: React.FC<Props> = ({
               {(() => {
                 const structuredMethods = normalizeAlternativeMethods(sub.alternative_methods);
                 const altList = normalizeAlternativeSolutions(sub.alternative_solutions);
-                // #region agent log
-                if (idx === 0) {
-                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9aef34' },
-                    body: JSON.stringify({
-                      sessionId: '9aef34',
-                      location: 'AstMathAStrategy.tsx:altSolutions',
-                      message: 'sub0 alternative_solutions normalized',
-                      data: {
-                        hypothesisId: 'H2',
-                        rawType:
-                          sub.alternative_solutions == null
-                            ? 'null'
-                            : Array.isArray(sub.alternative_solutions)
-                              ? 'array'
-                              : typeof sub.alternative_solutions,
-                        normalizedCount: altList.length,
-                        structuredMethodsCount: structuredMethods.length,
-                        isAstMathA,
-                      },
-                      timestamp: Date.now(),
-                      runId: 'post-fix',
-                    }),
-                  }).catch(() => {});
-                }
-                // #endregion
                 if (structuredMethods.length === 0 && altList.length === 0) return null;
                 return (
                   <div className="mt-8 p-6 bg-emerald-500/5 rounded-[2rem] border border-emerald-500/20 relative z-10 w-full min-w-0">
@@ -854,55 +745,6 @@ const AstMathAStrategy: React.FC<Props> = ({
                   };
                 }
 
-                // #region agent log
-                if (idx === 0 && stemSubjectBase === 'physics') {
-                  const hasGeo = renderableFromModel.some(
-                    (it) => (it as { type?: string }).type === 'geometry_json',
-                  );
-                  let vizBranch = 'other';
-                  if (prefetchOk && renderableFromModel.length === 0) {
-                    vizBranch = 'prefetch_only_empty_model';
-                  } else if (rawVcObj != null) {
-                    if (
-                      prefetchOk &&
-                      stemUsesQuestionGeometry &&
-                      renderableFromModel.length > 0 &&
-                      !hasGeo
-                    ) {
-                      vizBranch = 'prepend_question_geometry';
-                    } else {
-                      vizBranch = 'raw_vc';
-                    }
-                  } else if (typeof rawVc === 'string' && rawVc.trim()) {
-                    vizBranch = 'raw_vc_string';
-                  } else if (prefetchOk) {
-                    vizBranch = 'prefetch_only_no_raw_object';
-                  }
-                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
-                    body: JSON.stringify({
-                      sessionId: 'd7ef55',
-                      location: 'AstMathAStrategy.tsx:vizMerge',
-                      message: 'physics stem_sub visualization path',
-                      data: {
-                        hypothesisId: 'H1-H3',
-                        stemSubjectBase,
-                        stemUsesQuestionGeometry,
-                        prefetchOk,
-                        vcInputType: typeof sub.visualization_code,
-                        rawVizLen: rawItems.length,
-                        renderableFromModelLen: renderableFromModel.length,
-                        hasModelGeometryJson: hasGeo,
-                        vizBranch,
-                        hasVizContent: visualizationContent != null,
-                      },
-                      timestamp: Date.now(),
-                      runId: 'post-fix',
-                    }),
-                  }).catch(() => {});
-                }
-                // #endregion
                 if (!visualizationContent) return null;
                 const vc: unknown = visualizationContent;
                 const chem = subjectName.includes('化學') || subjectName.includes('Chemistry');
@@ -923,31 +765,6 @@ const AstMathAStrategy: React.FC<Props> = ({
                         if (en && /^[\x20-\x7E]+$/.test(en)) return true;
                         return false;
                       })());
-                // #region agent log
-                if (chem && idx === 0) {
-                  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1e3c30' },
-                    body: JSON.stringify({
-                      sessionId: '1e3c30',
-                      runId: 'post-fix',
-                      hypothesisId: 'H3',
-                      location: 'AstMathAStrategy.tsx:chemistryVizBranch',
-                      message: 'chemistry visualization branch',
-                      data: {
-                        rootMol3dOk,
-                        stemSubjectBase,
-                        vcType: vc == null ? 'null' : typeof vc,
-                        hasVisualizationsKey:
-                          vc != null &&
-                          typeof vc === 'object' &&
-                          Array.isArray((vc as { visualizations?: unknown }).visualizations),
-                      },
-                      timestamp: Date.now(),
-                    }),
-                  }).catch(() => {});
-                }
-                // #endregion
                 return rootMol3dOk ? (
                    <div className="mt-8 relative z-10 bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
                      <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">

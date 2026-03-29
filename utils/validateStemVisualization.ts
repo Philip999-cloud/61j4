@@ -142,34 +142,6 @@ export function validateVisualizationItem(item: unknown): VizValidationResult {
     case 'plotly_chart': {
       const d = v.data;
       const ok = plotlyDataLooksRenderable(d);
-      if (!ok && typeof fetch !== 'undefined') {
-        // #region agent log
-        fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
-          body: JSON.stringify({
-            sessionId: '875c85',
-            runId: 'post-fix',
-            hypothesisId: 'H3',
-            location: 'validateStemVisualization.ts:plotly_chart',
-            message: 'plotly_no_data shape',
-            data: {
-              dataIsArray: Array.isArray(d),
-              arrLen: Array.isArray(d) ? d.length : null,
-              nestedLen:
-                d && typeof d === 'object' && !Array.isArray(d) && Array.isArray((d as Record<string, unknown>).data)
-                  ? (d as { data: unknown[] }).data.length
-                  : null,
-              hasTraceXY:
-                d && typeof d === 'object' && !Array.isArray(d)
-                  ? (d as Record<string, unknown>).x != null && (d as Record<string, unknown>).y != null
-                  : false,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-      }
       return ok ? { valid: true } : { valid: false, reason: 'plotly_no_data' };
     }
     case 'recharts_plot':

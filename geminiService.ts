@@ -14,6 +14,7 @@ import { StrategyFactory } from "./strategies/StrategyFactory";
 import { allocateStemSubQuartetFromEarned } from "./utils/mathScoringUtils";
 import { dedupeStemSubResultsBySubId } from "./utils/dedupeStemSubResults";
 import { normalizePhase3StemSubResultsForDisplay } from "./utils/stemPhase3DisplayNormalize";
+import { buildPhase3ModeratorResponseSchema } from "./utils/phase3ModeratorResponseSchema";
 import { TEACH_FRAMEWORK_PROMPT } from "./utils/systemPrompt";
 
 const STRICT_MATH_FORMAT_RULES = `You are an expert STEM tutor and a strict JSON API worker. Your outputs are rendered by KaTeX on the frontend. You MUST strictly adhere to the following LaTeX formatting rules to prevent parsing errors ("Math rendering failed"). Failure to follow these rules will crash the application.
@@ -70,11 +71,27 @@ const AST_CHEMISTRY_PHASE3_SUBJECT_ID = 'ast-chemistry';
 const AST_BIOLOGY_PHASE3_SUBJECT_ID = 'ast-biology';
 /** 分科物理：長 prompt（一題多解、五段式、3D plotly）16k 易 MAX_TOKENS 截斷，批改與圖示後段缺失 */
 const AST_PHYSICS_PHASE3_SUBJECT_ID = 'ast-physics';
+const GSAT_MATH_A_PHASE3_SUBJECT_ID = 'gsat-math-a';
+const GSAT_MATH_B_PHASE3_SUBJECT_ID = 'gsat-math-b';
 /** 學測自然科：IntegratedScience 強制每子題 visualization_code、五段式、CEEC 等，JSON 體積與分科理科同級；16k 易截斷致詳解不完整 */
 const GSAT_SCIENCE_PHASE3_SUBJECT_ID = 'gsat-science';
 
+/** 批改／標準詳解須強制輸出 visualization_code（非 null）的科目 id */
+const PHASE3_FORCE_VIZ_SUBJECT_IDS = new Set<string>([
+  AST_MATH_A_PHASE3_SUBJECT_ID,
+  GSAT_MATH_A_PHASE3_SUBJECT_ID,
+  GSAT_MATH_B_PHASE3_SUBJECT_ID,
+  AST_PHYSICS_PHASE3_SUBJECT_ID,
+]);
+
+function phase3ForcesVisualization(subjectId?: string): boolean {
+  return !!subjectId && PHASE3_FORCE_VIZ_SUBJECT_IDS.has(subjectId);
+}
+
 const STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS = new Set([
   AST_MATH_A_PHASE3_SUBJECT_ID,
+  GSAT_MATH_A_PHASE3_SUBJECT_ID,
+  GSAT_MATH_B_PHASE3_SUBJECT_ID,
   AST_CHEMISTRY_PHASE3_SUBJECT_ID,
   AST_BIOLOGY_PHASE3_SUBJECT_ID,
   AST_PHYSICS_PHASE3_SUBJECT_ID,
@@ -128,7 +145,7 @@ const MATH_STEM_VIZ_APPENDIX = `
 **圓錐曲線、含 xy 交叉項之旋轉橢圓、隱式二次曲線等**：必須用 **svg_diagram**（座標軸、虛線／實線橢圓、標記點與色碼）或 **plotly_chart**（例如多條 scatter mode "lines" 畫參數曲線、contour 畫 F(x,y)=c，關鍵點用 scatter mode "markers"；data 須可繪製，不可僅有 title）。
 3D 空間幾何用 plotly_chart（data 須含可繪製的 traces）；平面顯式函數圖優先 python_plot（func_str、x_range、y_range 與現有沙箱一致）。若無法滿足 python_plot 必填欄位，改 plotly_chart 或 svg_diagram，**不要**改 output python_script。
 visualizations[].type 可渲染者：**geometry_json、svg_diagram、plotly_chart、python_plot**。**不要**在 visualizations 內放入 python_script 作為題圖或解題示意圖。
-純代數演算、無任何圖示需求時可將 visualization_code 設為 null。
+**數學甲／學測數A／數B（對應 ast-math-a、gsat-math-a、gsat-math-b）Phase3**：\`visualization_code\` **禁止為 null**；每子題至少一項可渲染圖示（純代數亦須最小示意，如數線、座標點、簡圖）。
 嚴禁改動 setup、process、result、logic、max_points 的語意與加總規則；visualization_code 為獨立輔助欄位，不得刪減或取代評分 JSON 結構。
 `;
 
@@ -401,15 +418,6 @@ function safeJsonParse(text: string | null | undefined): any {
             return JSON.parse(repaired2);
           } catch (e5) {
             console.error("JSON Parse 最終失敗", e5);
-            // #region agent log
-            {
-              const posMatch = String((e5 as Error)?.message || '').match(/position\s+(\d+)/i);
-              const pos = posMatch ? parseInt(posMatch[1], 10) : NaN;
-              const start = Number.isFinite(pos) ? Math.max(0, pos - 40) : 300;
-              const end = Number.isFinite(pos) ? pos + 40 : 380;
-              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b5019'},body:JSON.stringify({sessionId:'7b5019',runId:'pre-fix',hypothesisId:'H1-H3',location:'geminiService.ts:safeJsonParse:finalFail',message:'safeJsonParse final failure',data:{errMsg:String((e5 as Error)?.message||e5),textLen:cleaned.length,sliceAround:cleaned.slice(start,end),hasDoubleSlashComment:/\/\/\s*👈/.test(cleaned),hasVizLineComment:/\/\/\s*visualization_code/i.test(cleaned)},timestamp:Date.now()})}).catch(()=>{});
-            }
-            // #endregion
             return null;
           }
         }
@@ -503,17 +511,10 @@ export async function transcribeHandwrittenImages(
   subject?: Pick<Subject, 'id' | 'name'> | null,
 ): Promise<string> {
   if (!images || images.length === 0) {
-    // #region agent log
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H3',location:'geminiService.ts:transcribeHandwrittenImages',message:'empty images array',data:{mode,subjectId:subject?.id??null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return "";
   }
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  // #region agent log
-  const first = images[0] ? String(images[0]) : '';
-  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1-H3',location:'geminiService.ts:transcribeHandwrittenImages:entry',message:'transcribe start',data:{mode,subjectId:subject?.id??null,imageCount:images.length,firstUrlPrefix:first.slice(0,48),looksLikeDataUrl:first.startsWith('data:')},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-  
+
   // 動態解析 Data URL
   const parts: any[] = images.map(dataUrl => {
     // 使用正則表達式解析 mimeType 與 base64 資料
@@ -549,15 +550,9 @@ export async function transcribeHandwrittenImages(
         contents: { parts }
       }, 3, 2000);
       const t = result.text || "";
-      // #region agent log
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:visualExit',message:'visual task result',data:{outLen:t.length,outPreview:t.slice(0,280)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return t;
     } catch (e) {
       console.warn("Visual Graphing Task failed, returning empty string.", e);
-      // #region agent log
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H4',location:'geminiService.ts:transcribeHandwrittenImages:visualCatch',message:'visual task failed',data:{err:String((e as Error)?.message||e)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return "";
     }
   }
@@ -626,23 +621,14 @@ export async function transcribeHandwrittenImages(
       contents: { parts }
     }, 3, 2000);
     const t = result.text || "";
-    // #region agent log
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:ocrOk',message:'ocr result',data:{mode,subjectId:subject?.id??null,outLen:t.length,outPreview:t.slice(0,320)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return t;
   } catch (e) {
     console.warn('OCR (gemini-3.1-pro-preview) failed, retrying...', e);
-    // #region agent log
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H4',location:'geminiService.ts:transcribeHandwrittenImages:ocrRetry',message:'ocr first attempt failed',data:{mode,err:String((e as Error)?.message||e)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const result = await generateContentWithRetry(ai, {
       model: 'gemini-3.1-pro-preview',
       contents: { parts }
     }, 2, 2000);
     const t2 = result.text || "";
-    // #region agent log
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H1',location:'geminiService.ts:transcribeHandwrittenImages:ocrRetryOk',message:'ocr after retry',data:{mode,outLen:t2.length,outPreview:t2.slice(0,320)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return t2;
   }
 }
@@ -891,17 +877,25 @@ export async function runModeratorSynthesis(
   const promptForTimeout =
     typeof contents === 'string' ? contents : visionPrefix + prompt;
 
-  // #region agent log
-  const inlinePartCount =
-    typeof contents === 'object' && contents && 'parts' in contents
-      ? Math.max(0, (contents as { parts: unknown[] }).parts.length - 1)
-      : 0;
-  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'pre',hypothesisId:'H2',location:'geminiService.ts:runModeratorSynthesis:contents',message:'phase3 payload shape',data:{subjectId:subjectId??null,subjectName,useMultimodal,hasVisionUrls,inlinePartCount,contentLen:content.length,contentPreview:content.slice(0,400)},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-
-  /** 與物理相同：compounds schema 下若未標 required，Flash 常省略 max_points／feedback，致 UI 出現 MAX「—」與閱卷點評空白（見生物 Q48） */
+  /** compounds schema 或數學 Phase3：未標 required 時 Flash 常省略欄位 */
   const stemSubItemStemGradeRequired =
-    /物理|physics/i.test(subjectName) || /生物|biology/i.test(subjectName);
+    /物理|physics/i.test(subjectName) ||
+    /生物|biology/i.test(subjectName) ||
+    isMathStemSubject(subjectName);
+
+  const phase3ForceViz =
+    phase3ForcesVisualization(subjectId) || isMathStemSubject(subjectName);
+  const stemSchemaIncludesCompounds = COMPOUNDS_SCHEMA_SUBJECTS.some((k) =>
+    subjectName.includes(k),
+  );
+  const useStemPhase3ResponseSchema =
+    stemSchemaIncludesCompounds || isMathStemSubject(subjectName);
+
+  const phase3VizCodeSchemaDescription = !phase3ForceViz
+    ? '若有圖表需求必須填入，否則設為 null'
+    : subjectId === AST_PHYSICS_PHASE3_SUBJECT_ID
+      ? '分科物理必填：{ explanation, visualizations }，visualizations 至少一項且須可渲染（禁止 null、禁止空 data:[]）'
+      : '數學（數學甲／學測數A／數B）必填：{ explanation, visualizations }，至少一項可渲染；禁止 null、禁止空 data:[]';
 
   const baseConfig = {
     responseMimeType: "application/json" as const,
@@ -909,286 +903,13 @@ export async function runModeratorSynthesis(
     temperature: 0.2,
     /** 化學／物理 compounds + stem_sub_results 體積大；數學甲、分科化學／生物／物理見 maxOutputTokensForStemPhase3（65536） */
     maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
-    ...(COMPOUNDS_SCHEMA_SUBJECTS.some(k => subjectName.includes(k)) && {
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          final_score: { type: Type.NUMBER },
-          max_score: { type: Type.NUMBER },
-          remarks_zh: { type: Type.STRING },
-          growth_roadmap: { type: Type.ARRAY, items: { type: Type.STRING } },
-          detailed_fixes: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                type: { type: Type.STRING },
-                original: { type: Type.STRING },
-                corrected: { type: Type.STRING },
-                refined: { type: Type.STRING },
-                logic: { type: Type.STRING },
-              },
-            },
-          },
-          stem_sub_results: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              ...(stemSubItemStemGradeRequired
-                ? { required: ['sub_id', 'setup', 'process', 'result', 'logic', 'max_points', 'feedback'] }
-                : {}),
-              properties: {
-                sub_id: { type: Type.STRING },
-                sub_stem_discipline: {
-                  type: Type.STRING,
-                  nullable: true,
-                  description:
-                    '學測自然科專用：本子題學門 physics|chemistry|biology|earth|integrated',
-                },
-                key_molecules_smiles: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: '該小題重要分子之 SMILES；無則 []',
-                },
-                setup: { type: Type.NUMBER },
-                process: { type: Type.NUMBER },
-                result: { type: Type.NUMBER },
-                logic: { type: Type.NUMBER },
-                max_points: { type: Type.NUMBER },
-                feedback: { type: Type.STRING },
-                correct_calculation: { type: Type.STRING },
-                concept_correction: { type: Type.STRING, nullable: true },
-                alternative_solutions: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
-                alternative_methods: {
-                  type: Type.ARRAY,
-                  nullable: true,
-                  description:
-                    '化學等科一題多解結構化：每物件為一獨立解法，含 method_name、description、steps 字串陣列',
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      method_name: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      steps: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    },
-                  },
-                },
-                knowledge_tags: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
-                scientific_notation_and_units: { type: Type.STRING, nullable: true },
-                internal_verification: { type: Type.STRING, nullable: true },
-                zero_compression: {
-                  type: Type.OBJECT,
-                  nullable: true,
-                  description:
-                    '五段式零跳步詳解（繁中＋LaTeX 雙跳脫）；無則 null',
-                  properties: {
-                    given: { type: Type.STRING },
-                    formula: { type: Type.STRING },
-                    substitute: { type: Type.STRING },
-                    derive: { type: Type.STRING },
-                    answer: { type: Type.STRING },
-                  },
-                },
-                ceec_answer_sheet: {
-                  type: Type.OBJECT,
-                  nullable: true,
-                  description:
-                    '擬真大考作答區：矩陣勾選表、申論欄、選擇題或虛線列；不適用則 null',
-                  properties: {
-                    mode: {
-                      type: Type.STRING,
-                      description: 'mcq | fill | short | mixed',
-                    },
-                    line_count: { type: Type.NUMBER, nullable: true },
-                    lines_per_response_field: { type: Type.NUMBER, nullable: true },
-                    response_field_labels: {
-                      type: Type.ARRAY,
-                      nullable: true,
-                      items: { type: Type.STRING },
-                    },
-                    answer_grid: {
-                      type: Type.OBJECT,
-                      nullable: true,
-                      properties: {
-                        row_labels: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        col_labels: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        solution_checks_per_row: {
-                          type: Type.ARRAY,
-                          nullable: true,
-                          items: { type: Type.NUMBER, nullable: true },
-                        },
-                      },
-                    },
-                    mcq: {
-                      type: Type.OBJECT,
-                      nullable: true,
-                      properties: {
-                        mode: {
-                          type: Type.STRING,
-                          description: 'single | multi',
-                        },
-                        options: {
-                          type: Type.ARRAY,
-                          items: { type: Type.STRING },
-                        },
-                        correct_indices: {
-                          type: Type.ARRAY,
-                          items: { type: Type.NUMBER },
-                        },
-                      },
-                    },
-                  },
-                },
-                micro_lesson: {
-                  type: Type.OBJECT,
-                  nullable: true,
-                  description:
-                    'Phase 4 圖像式微課程（教學補充卡）；不適用則 null。欄位依 variant 取捨：oxidation_timeline 需 steps；color_oscillation 需 color_from/color_to（僅 #RRGGBB）；coordination_multiply 需 bidentate_count，teeth_per_ligand 可選預設 2。',
-                  properties: {
-                    variant: {
-                      type: Type.STRING,
-                      description:
-                        'oxidation_timeline | color_oscillation | coordination_multiply',
-                    },
-                    title: { type: Type.STRING, nullable: true },
-                    caption: { type: Type.STRING, nullable: true },
-                    steps: {
-                      type: Type.ARRAY,
-                      nullable: true,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          label: { type: Type.STRING },
-                          species: { type: Type.STRING, nullable: true },
-                          oxidation_state: { type: Type.NUMBER },
-                        },
-                      },
-                    },
-                    arrows: {
-                      type: Type.ARRAY,
-                      nullable: true,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          from_index: { type: Type.NUMBER },
-                          to_index: { type: Type.NUMBER },
-                          label: { type: Type.STRING, nullable: true },
-                        },
-                      },
-                    },
-                    color_from: { type: Type.STRING, nullable: true },
-                    color_to: { type: Type.STRING, nullable: true },
-                    bidentate_count: { type: Type.NUMBER, nullable: true },
-                    teeth_per_ligand: { type: Type.NUMBER, nullable: true },
-                    result_coordination: { type: Type.NUMBER, nullable: true },
-                  },
-                },
-                student_input_parsing: {
-                  type: Type.OBJECT,
-                  nullable: true,
-                  properties: {
-                    segments: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          text: { type: Type.STRING },
-                          is_error: { type: Type.BOOLEAN },
-                          error_reason: { type: Type.STRING, nullable: true },
-                          correction: { type: Type.STRING, nullable: true }
-                        }
-                      }
-                    }
-                  }
-                },
-                visualization_code: {
-                  type: Type.OBJECT,
-                  nullable: true,
-                  description: '若有圖表需求必須填入，否則設為 null',
-                  properties: {
-                    explanation: { type: Type.STRING },
-                    visualizations: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          type: {
-                            type: Type.STRING,
-                            description:
-                              'scatter | plotly_chart | mol3d | svg_diagram | chem_aromatic_ring（苯環/吡啶+孤對電子）| physics_wave_interference | physics_snell_diagram | stem_xy_chart（x/y 陣列+chart_kind line|scatter）',
-                          },
-                          x: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                          y: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-                          mode: { type: Type.STRING },
-                          name: { type: Type.STRING },
-                          data: {
-                            type: Type.ARRAY,
-                            description: 'Plotly traces；欄位依圖表類型取捨',
-                            items: {
-                              type: Type.OBJECT,
-                              properties: {
-                                type: { type: Type.STRING, nullable: true },
-                                x: {
-                                  type: Type.ARRAY,
-                                  nullable: true,
-                                  items: { type: Type.NUMBER, nullable: true },
-                                },
-                                y: {
-                                  type: Type.ARRAY,
-                                  nullable: true,
-                                  items: { type: Type.NUMBER, nullable: true },
-                                },
-                                z: {
-                                  type: Type.ARRAY,
-                                  nullable: true,
-                                  items: { type: Type.NUMBER, nullable: true },
-                                },
-                                mode: { type: Type.STRING, nullable: true },
-                                name: { type: Type.STRING, nullable: true },
-                                text: {
-                                  type: Type.ARRAY,
-                                  nullable: true,
-                                  items: { type: Type.STRING, nullable: true },
-                                },
-                              },
-                            },
-                          },
-                          layout: {
-                            type: Type.OBJECT,
-                            nullable: true,
-                            description: 'Plotly layout；可只填常用鍵',
-                            properties: {
-                              title: { type: Type.STRING, nullable: true },
-                            },
-                          },
-                          svgCode: { type: Type.STRING },
-                          cid: { type: Type.STRING },
-                          smiles: { type: Type.STRING, nullable: true, description: 'mol3d 等用 SMILES' },
-                          title: { type: Type.STRING, nullable: true, description: '圖表或 3D 標題' },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          compounds: {
-            type: Type.ARRAY,
-            description: '題目中出現的所有化合物，供前端渲染結構式與 3D 模型',
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING, description: 'PubChem 可搜尋的化合物名稱（英文或繁體中文）' },
-                formula: { type: Type.STRING, description: '化學式，例如 H2SO4、C6H12O6' },
-                smiles: { type: Type.STRING, nullable: true, description: '標準 SMILES，供結構式與 3D' },
-                english_name: { type: Type.STRING, nullable: true, description: 'IUPAC 或精確英文名，供 PubChem name 查詢' },
-              },
-              required: ['name'],
-            },
-          },
-        },
-      },
+    ...(useStemPhase3ResponseSchema && {
+      responseSchema: buildPhase3ModeratorResponseSchema({
+        stemSubItemStemGradeRequired,
+        phase3ForceViz,
+        stemSchemaIncludesCompounds,
+        visualizationCodeDescription: phase3VizCodeSchemaDescription,
+      }),
     }),
   };
 
@@ -1201,11 +922,11 @@ export async function runModeratorSynthesis(
       Array.isArray((contents as { parts?: unknown }).parts);
     const stemPhase3HighOutput =
       !!subjectId && STEM_PHASE3_HIGH_OUTPUT_SUBJECT_IDS.has(subjectId);
-    const compoundsSchemaByName = COMPOUNDS_SCHEMA_SUBJECTS.some((k) => subjectName.includes(k));
+    const stemPhase3StructuredSchemaActive = useStemPhase3ResponseSchema;
     const baseProMs = getProTimeoutMs(promptForTimeout);
     // 多模態僅以文字計時會低估；高分科 Phase3 JSON 體積大，Pro 需更長等待以免誤降級 Flash
     let proWaitMs = Math.max(baseProMs, 240_000);
-    if (isMultimodalContents || stemPhase3HighOutput || compoundsSchemaByName) {
+    if (isMultimodalContents || stemPhase3HighOutput || stemPhase3StructuredSchemaActive) {
       proWaitMs = Math.max(proWaitMs, 360_000);
     }
     /** 實測 Console：生物 Phase3 Pro 在 360000ms 整點逾時後降級 Flash；略延長以降低「剛好斷在上限」的誤判 */
@@ -1223,25 +944,6 @@ export async function runModeratorSynthesis(
   } catch (e) {
     const fallbackReason = e instanceof Error ? e.message : String(e);
     console.warn('[runModeratorSynthesis] Pro 逾時或失敗，改以 Flash 模型重試:', fallbackReason);
-    // #region agent log
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
-      body: JSON.stringify({
-        sessionId: '42c4c3',
-        runId: 'post-timeout-tweak',
-        hypothesisId: 'H1',
-        location: 'geminiService.ts:runModeratorSynthesis:proCatch',
-        message: 'Pro failed; Flash fallback',
-        data: {
-          subjectId: subjectId ?? null,
-          subjectName,
-          fallbackReason,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     // Fallback: Flash (High persistence: 4 retries)
     result = await generateContentWithRetry(ai, {
       model: GEMINI_FLASH_FALLBACK_MODEL,
@@ -1380,157 +1082,7 @@ export async function runModeratorSynthesis(
         }
       }
     }
-    // #region agent log
-    if (/物理|physics/i.test(subjectName) && parsed.stem_sub_results?.[0]) {
-      const s0 = parsed.stem_sub_results[0] as Record<string, unknown>;
-      const vc = s0.visualization_code;
-      const v0 =
-        vc && typeof vc === 'object' && !Array.isArray(vc) && Array.isArray((vc as { visualizations?: unknown }).visualizations)
-          ? (vc as { visualizations: unknown[] }).visualizations[0]
-          : null;
-      const zc = s0.zero_compression as Record<string, unknown> | undefined;
-      const subRaw = zc?.substitute;
-      const subPhrase = '理論上彈性碰撞';
-      const subStrLen = typeof subRaw === 'string' ? subRaw.length : 0;
-      const subPhraseCount =
-        typeof subRaw === 'string' ? subRaw.split(subPhrase).length - 1 : 0;
-      // #region agent log
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
-        body: JSON.stringify({
-          sessionId: '09f966',
-          runId: 'pre-fix',
-          hypothesisId: 'H1-H2-H5',
-          location: 'geminiService.ts:runModeratorSynthesis:physicsSubstitute',
-          message: 'phase3 zero_compression.substitute shape',
-          data: {
-            substituteKind:
-              subRaw == null ? 'null' : Array.isArray(subRaw) ? 'array' : typeof subRaw,
-            substituteArrayLen: Array.isArray(subRaw) ? subRaw.length : null,
-            substituteStringLen: subStrLen,
-            phraseRepeatCount: subPhraseCount,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
-        body: JSON.stringify({
-          sessionId: '875c85',
-          runId: 'post-fix',
-          hypothesisId: 'H1-H5',
-          location: 'geminiService.ts:runModeratorSynthesis:physicsStem0',
-          message: 'phase3 first stem snapshot',
-          data: {
-            final_score: parsed.final_score,
-            max_score: parsed.max_score,
-            setup: s0.setup,
-            process: s0.process,
-            result: s0.result,
-            logic: s0.logic,
-            types: [typeof s0.setup, typeof s0.process, typeof s0.result, typeof s0.logic],
-            feedbackLen: String(s0.feedback ?? '').length,
-            viz0Type: v0 && typeof v0 === 'object' ? (v0 as { type?: string }).type : null,
-            viz0DataLen:
-              v0 && typeof v0 === 'object' && Array.isArray((v0 as { data?: unknown }).data)
-                ? (v0 as { data: unknown[] }).data.length
-                : null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
   }
-  // #region agent log
-  {
-    const chemH = /化學|chemistry/i.test(subjectName);
-    if (chemH) {
-      const rt = result?.text ?? '';
-      const cand = (result as { candidates?: { finishReason?: string }[] })?.candidates?.[0];
-      const fr = cand?.finishReason ?? null;
-      const stemN = Array.isArray(parsed?.stem_sub_results) ? parsed.stem_sub_results.length : -1;
-      const maxTok = maxOutputTokensForStemPhase3(subjectId);
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1e3c30' },
-        body: JSON.stringify({
-          sessionId: '1e3c30',
-          runId: 'post-fix',
-          hypothesisId: 'H1',
-          location: 'geminiService.ts:runModeratorSynthesis:chemistryExit',
-          message: 'chemistry phase3 output shape vs token cap',
-          data: {
-            subjectId: subjectId ?? null,
-            maxOutputTokens: maxTok,
-            responseTextLen: rt.length,
-            finishReason: fr,
-            parsedStemSubCount: stemN,
-            hasCompounds: Array.isArray((parsed as { compounds?: unknown })?.compounds),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-  }
-  // #endregion
-  // #region agent log
-  {
-    const bioH = /生物|biology/i.test(subjectName);
-    if (bioH) {
-      const rt = result?.text ?? '';
-      const cand = (result as { candidates?: { finishReason?: string }[] })?.candidates?.[0];
-      const fr = cand?.finishReason ?? null;
-      const stemN = Array.isArray(parsed?.stem_sub_results) ? parsed.stem_sub_results.length : -1;
-      const maxTok = maxOutputTokensForStemPhase3(subjectId);
-      const compoundsOn = COMPOUNDS_SCHEMA_SUBJECTS.some((k) => subjectName.includes(k));
-      const s0 =
-        parsed && Array.isArray(parsed.stem_sub_results) && parsed.stem_sub_results[0]
-          ? (parsed.stem_sub_results[0] as Record<string, unknown>)
-          : null;
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '42c4c3' },
-        body: JSON.stringify({
-          sessionId: '42c4c3',
-          runId: 'pre-fix',
-          hypothesisId: 'H1',
-          location: 'geminiService.ts:runModeratorSynthesis:biologyExit',
-          message: 'biology phase3 parse and token shape',
-          data: {
-            subjectId: subjectId ?? null,
-            maxOutputTokens: maxTok,
-            compoundsSchemaOn: compoundsOn,
-            responseTextLen: rt.length,
-            finishReason: fr,
-            parsedIsNull: parsed == null,
-            parsedStemSubCount: stemN,
-            compoundsLen: Array.isArray((parsed as { compounds?: unknown[] })?.compounds)
-              ? (parsed as { compounds: unknown[] }).compounds.length
-              : null,
-            sub0setup: s0?.setup,
-            sub0process: s0?.process,
-            sub0result: s0?.result,
-            sub0logic: s0?.logic,
-            textTail: rt.slice(-140),
-            sub0feedbackLen:
-              s0 && typeof (s0 as { feedback?: unknown }).feedback === 'string'
-                ? (s0 as { feedback: string }).feedback.length
-                : null,
-            sub0correctCalcLen:
-              s0 && typeof (s0 as { correct_calculation?: unknown }).correct_calculation === 'string'
-                ? (s0 as { correct_calculation: string }).correct_calculation.length
-                : null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-  }
-  // #endregion
   return parsed;
 }
 
@@ -1575,7 +1127,9 @@ export async function generateReferenceSolution(
     # VISUALIZATION ENGINE (JSON OBJECT) — 標準詳解與完整批改相同，不可省略可畫圖之題：
     ${isComposition 
       ? 'Do not generate visualizations for composition tasks.'
-      : `Each \`stem_sub_results[]\` item MUST include the key \`visualization_code\`: either \`null\` (only if that sub-question is purely symbolic algebra with **no** geometric, graphical, vector, or solid-figure meaning) **or** an object \`{ "explanation": "...", "visualizations": [ ... ] }\` with **at least one** client-renderable item.
+      : `Each \`stem_sub_results[]\` item MUST include the key \`visualization_code\`.
+    **數學（數學甲／學測數A／數B）與分科物理**：\`visualization_code\` **禁止為 null**；必須為 \`{ "explanation": "...", "visualizations": [ ... ] }\` 且 \`visualizations\` 至少一項可渲染（純代數亦須最小示意圖）。
+    **其餘理科**：僅在該小題純符號演算且完全無圖示語意時才可為 \`null\`；否則同上物件格式。
 
     **ABSOLUTE PROHIBITION**: Do NOT output \`plotly_chart\` with an **empty** \`"data": []\` array — the UI rejects it and the student sees no figure. Every \`plotly_chart\` MUST have \`data\` as a **non-empty** array of Plotly traces (numeric coordinates; strings are coerced but prefer JSON numbers).
 
@@ -1648,27 +1202,53 @@ export async function generateReferenceSolution(
   const refPromptForTimeout =
     typeof refContents === 'string' ? refContents : visionPrefix + prompt;
 
-  // #region agent log
-  const refInlineCount =
-    typeof refContents === 'object' && refContents && 'parts' in refContents
-      ? Math.max(0, (refContents as { parts: unknown[] }).parts.length - 1)
-      : 0;
-  fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'0b2efe'},body:JSON.stringify({sessionId:'0b2efe',runId:'post-fix',hypothesisId:'REF_VISION',location:'geminiService.ts:generateReferenceSolution:contents',message:'reference solution payload',data:{subjectId:subjectId??null,useRefMultimodal,refInlineCount,contentLen:content.length},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-  
+  const refStemSubItemStemGradeRequired =
+    /物理|physics/i.test(subjectName) ||
+    /生物|biology/i.test(subjectName) ||
+    isMathStemSubject(subjectName);
+  const refPhase3ForceViz =
+    phase3ForcesVisualization(subjectId) || isMathStemSubject(subjectName);
+  const refStemSchemaIncludesCompounds =
+    COMPOUNDS_SCHEMA_SUBJECTS.some((k) => subjectName.includes(k)) &&
+    !isMathStemSubject(subjectName);
+  const refUseStemPhase3ResponseSchema =
+    !isComposition &&
+    (isMathStemSubject(subjectName) || phase3ForcesVisualization(subjectId));
+  const refPhase3VizCodeDescription = !refPhase3ForceViz
+    ? '若有圖表需求必須填入，否則設為 null'
+    : subjectId === AST_PHYSICS_PHASE3_SUBJECT_ID
+      ? '分科物理必填：{ explanation, visualizations }，visualizations 至少一項且須可渲染（禁止 null、禁止空 data:[]）'
+      : '數學（數學甲／學測數A／數B）必填：{ explanation, visualizations }，至少一項可渲染；禁止 null、禁止空 data:[]';
+
+  const refResponseSchema = refUseStemPhase3ResponseSchema
+    ? buildPhase3ModeratorResponseSchema({
+        stemSubItemStemGradeRequired: refStemSubItemStemGradeRequired,
+        phase3ForceViz: refPhase3ForceViz,
+        stemSchemaIncludesCompounds: refStemSchemaIncludesCompounds,
+        visualizationCodeDescription: refPhase3VizCodeDescription,
+      })
+    : undefined;
+
+  const refSharedConfig = {
+    responseMimeType: "application/json" as const,
+    systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
+    temperature: 0.2,
+    maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
+    ...(refResponseSchema ? { responseSchema: refResponseSchema } : {}),
+  };
+
   try {
-      // 標準詳解常含長篇 JSON／圖表：Pro 等待時間至少 4 分鐘，降低不必要降級 Flash
-      const proWaitMs = Math.max(getProTimeoutMs(refPromptForTimeout), 240_000);
+      // 標準詳解常含長篇 JSON／圖表：Pro 等待時間至少 4 分鐘；數學／物理結構化 schema 時與批改相同拉長逾時閾值
+      const proWaitMs = Math.max(
+        getProTimeoutMs(refPromptForTimeout),
+        240_000,
+        refUseStemPhase3ResponseSchema ? 360_000 : 0,
+      );
       const result = await withTimeout(
         generateContentWithRetry(ai, {
           model: 'gemini-3.1-pro-preview',
           contents: refContents,
-          config: { 
-            responseMimeType: "application/json",
-            systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
-            temperature: 0.2,
-            maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
-          }
+          config: refSharedConfig,
         }, 1, 1000),
         proWaitMs
       );
@@ -1682,12 +1262,7 @@ export async function generateReferenceSolution(
       const result = await generateContentWithRetry(ai, {
         model: GEMINI_FLASH_FALLBACK_MODEL,
         contents: refContents,
-        config: { 
-          responseMimeType: "application/json",
-          systemInstruction: buildSystemInstruction(STRICT_MATH_FORMAT_RULES, subjectName),
-          temperature: 0.2,
-          maxOutputTokens: maxOutputTokensForStemPhase3(subjectId),
-        }
+        config: refSharedConfig,
       }, 4, 2000);
       const refParsedFlash = safeJsonParse(result.text) || {};
       normalizePhase3StemSubResultsForDisplay(refParsedFlash, subjectName);

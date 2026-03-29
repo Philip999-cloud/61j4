@@ -86,20 +86,6 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({
       // 尺寸檢查：防止 Framebuffer 零尺寸錯誤
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
-      // #region agent log
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '95c4aa' },
-        body: JSON.stringify({
-          sessionId: '95c4aa',
-          location: 'Viewer3D.tsx:initViewer',
-          message: '3Dmol container size before createViewer',
-          data: { hypothesisId: 'H3', cw, ch, skipDueToZero: cw === 0 || ch === 0 },
-          timestamp: Date.now(),
-          runId: 'post-fix',
-        }),
-      }).catch(() => {});
-      // #endregion
       if (cw === 0 || ch === 0) return;
 
       const $3Dmol = await wait3Dmol();
@@ -197,36 +183,18 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({
         };
 
         if (cid) {
-          const pubchemSdf = (url: string, logLocation: string) =>
+          const pubchemSdf = (url: string) =>
             fetch(url).then((res) => {
-              // #region agent log
-              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '95c4aa' },
-                body: JSON.stringify({
-                  sessionId: '95c4aa',
-                  location: logLocation,
-                  message: 'PubChem SDF response',
-                  data: { hypothesisId: 'H2', cid: String(cid), httpStatus: res.status, ok: res.ok },
-                  timestamp: Date.now(),
-                  runId: 'post-fix',
-                }),
-              }).catch(() => {});
-              // #endregion
               if (!res.ok) throw new Error(`SDF: HTTP ${res.status}`);
               return res.text();
             });
 
           /** 先取預設 SDF（多數化合物有），避免對無 3D 構型的 CID 先打 record_type=3d 而固定出現 404 */
-          pubchemSdf(
-            `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF`,
-            'Viewer3D.tsx:pubchemDefaultSdf',
-          )
+          pubchemSdf(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF`)
             .then(applySdf)
             .catch(() =>
               pubchemSdf(
                 `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cid}/SDF?record_type=3d`,
-                'Viewer3D.tsx:pubchem3dSdf',
               )
                 .then(applySdf)
                 .catch((err2d) => {

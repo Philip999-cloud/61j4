@@ -706,29 +706,6 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
     setPlotlyWebGlNote(null);
     setPlotlyFailed(false);
     const rawTraces = normalizePlotlyData(data);
-    // #region agent log
-    if (typeof fetch !== 'undefined') {
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-        body: JSON.stringify({
-          sessionId: 'b584db',
-          location: 'VisualizationRenderer.tsx:PlotlyChart',
-          message: 'plotly normalizePlotlyData',
-          data: {
-            hypothesisId: 'H5',
-            title: title || '',
-            traceCount: rawTraces?.length ?? 0,
-            skippedNewPlot: !rawTraces || rawTraces.length === 0,
-            dataIsArray: Array.isArray(data),
-            rawDataType: data == null ? 'null' : typeof data,
-          },
-          timestamp: Date.now(),
-          runId: 'pre-fix',
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
     if (!rawTraces || rawTraces.length === 0) return;
 
     const vizOpts = { title, caption, explanation };
@@ -793,22 +770,6 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       setPlotlyWebGlNote(
         '3D 座標資料不完整（例如缺少 z 或 x/y/z 長度不符），已略過無效的 scatter3d。若批改曾改以 Flash 模型，視覺化可能較不完整，可再試一次批改。',
       );
-      // #region agent log
-      if (typeof fetch !== 'undefined') {
-        fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-          body: JSON.stringify({
-            sessionId: 'b584db',
-            location: 'VisualizationRenderer.tsx:PlotlyChart:dropScatter3d',
-            message: 'filtered invalid scatter3d',
-            data: { hypothesisId: 'H4', title: title || '' },
-            timestamp: Date.now(),
-            runId: 'pre-fix',
-          }),
-        }).catch(() => {});
-      }
-      // #endregion
     }
     if (!tracesForPlot2d || tracesForPlot2d.length === 0) return;
 
@@ -1059,39 +1020,6 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       };
     }
 
-    // #region agent log
-    if (typeof fetch !== 'undefined') {
-      const t0 = tracesForPlot2d[0];
-      const ys = t0?.y;
-      const yArr = Array.isArray(ys) ? ys.map(Number).filter((n) => !Number.isNaN(n)) : [];
-      const zs = t0?.z;
-      const zArr = Array.isArray(zs) ? zs.map(Number).filter((n) => !Number.isNaN(n)) : [];
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-        body: JSON.stringify({
-          sessionId: 'b584db',
-          location: 'VisualizationRenderer.tsx:PlotlyChart:preNewPlot',
-          message: 'plotly first trace stats',
-          data: {
-            hypothesisId: 'H4',
-            firstType: t0?.type,
-            yLen: Array.isArray(ys) ? ys.length : 0,
-            yMin: yArr.length ? Math.min(...yArr) : null,
-            yMax: yArr.length ? Math.max(...yArr) : null,
-            zLen: Array.isArray(zs) ? zs.length : 0,
-            zMin: zArr.length ? Math.min(...zArr) : null,
-            zMax: zArr.length ? Math.max(...zArr) : null,
-            yaxisRange: mergedLayout?.yaxis?.range,
-            hasScene: !!mergedLayout?.scene,
-          },
-          timestamp: Date.now(),
-          runId: 'pre-fix',
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
-
     const config = { 
         responsive: true, 
         displayModeBar: true, // 允許使用者縮放平移
@@ -1129,22 +1057,6 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       } catch (e) {
         console.error("Plotly Render Error:", e);
         setPlotlyFailed(true);
-        // #region agent log
-        if (typeof fetch !== 'undefined') {
-          fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-            body: JSON.stringify({
-              sessionId: 'b584db',
-              location: 'VisualizationRenderer.tsx:PlotlyChart:newPlotError',
-              message: String(e instanceof Error ? e.message : e),
-              data: { hypothesisId: 'H4', title: title || '' },
-              timestamp: Date.now(),
-              runId: 'pre-fix',
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
       }
     };
 
@@ -1189,27 +1101,6 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
   if (!hasPlotlyTraces) {
     const hint =
       explanation?.trim() || caption?.trim() || (typeof title === 'string' && title.trim());
-    // #region agent log
-    if (typeof fetch !== 'undefined') {
-      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
-        body: JSON.stringify({
-          sessionId: 'd7ef55',
-          location: 'VisualizationRenderer.tsx:PlotlyChart:noTracesUi',
-          message: 'plotly no renderable traces — showing text fallback',
-          data: {
-            hypothesisId: 'H-empty-plot',
-            hasExplanation: !!(explanation && explanation.trim()),
-            hasCaption: !!(caption && caption.trim()),
-            titleLen: typeof title === 'string' ? title.length : 0,
-          },
-          timestamp: Date.now(),
-          runId: 'post-fix',
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
     return (
       <div className="w-full max-w-full max-h-[min(72vh,560px)] overflow-auto space-y-2">
         {hint ? (
@@ -1558,24 +1449,6 @@ export const VisualizationRenderer: React.FC<{
                      parsed = null;
                  } else {
                      parsed = { explanation: cleanCode, visualizations: [] };
-                     // #region agent log
-                     fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                       method: 'POST',
-                       headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
-                       body: JSON.stringify({
-                         sessionId: 'd7ef55',
-                         location: 'VisualizationRenderer.tsx:stringParseFallback',
-                         message: 'viz string fallback to explanation-only',
-                         data: {
-                           hypothesisId: 'H4',
-                           cleanCodeLen: cleanCode.length,
-                           looksLikeJson: cleanCode.trimStart().startsWith('{'),
-                         },
-                         timestamp: Date.now(),
-                         runId: 'post-fix',
-                       }),
-                     }).catch(() => {});
-                     // #endregion
                  }
             }
         }
@@ -1665,27 +1538,6 @@ export const VisualizationRenderer: React.FC<{
              PLOTLY_TRACE_TYPES.has(viz.type) &&
              (viz.x != null || viz.y != null || viz.z != null);
            if (hasPlotlyTraceShape) {
-             // #region agent log
-             if (typeof fetch !== 'undefined' && (viz.cid != null || viz.smiles)) {
-               fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b584db' },
-                 body: JSON.stringify({
-                   sessionId: 'b584db',
-                   location: 'VisualizationRenderer.tsx:vizNormalize',
-                   message: 'plotly trace precedence over cid/smiles',
-                   data: {
-                     hypothesisId: 'H_phys',
-                     traceType: viz.type,
-                     hadCid: viz.cid != null,
-                     hadSmiles: !!viz.smiles,
-                   },
-                   timestamp: Date.now(),
-                   runId: 'pre-fix',
-                 }),
-               }).catch(() => {});
-             }
-             // #endregion
              return {
                type: 'plotly_chart',
                title: viz.title || viz.name || 'Chart',
@@ -2439,29 +2291,6 @@ export const VisualizationRenderer: React.FC<{
             }
             if (viz.type === 'python_plot') {
               const pp = normalizePythonPlotViz(viz as unknown as Record<string, unknown>);
-              // #region agent log
-              fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e80fda' },
-                body: JSON.stringify({
-                  sessionId: 'e80fda',
-                  runId: 'post-fix',
-                  hypothesisId: 'H-python-plot',
-                  location: 'VisualizationRenderer.tsx:python_plot',
-                  message: 'python_plot normalized snapshot',
-                  data: {
-                    rawKeys: Object.keys(viz || {}),
-                    hasRawFuncStr: !!(viz as { func_str?: string }).func_str?.trim(),
-                    hasRawCode: !!(viz as { code?: string }).code?.trim(),
-                    normHasFunc: !!pp.func_str,
-                    normXR: pp.x_range ?? null,
-                    normYR: pp.y_range ?? null,
-                    hasSvg: !!pp.svgCode,
-                  },
-                  timestamp: Date.now(),
-                }),
-              }).catch(() => {});
-              // #endregion
               return (
                 <PythonFunctionPlotBlock
                   key={vk}

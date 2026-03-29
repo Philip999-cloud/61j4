@@ -256,32 +256,6 @@ export const transformToMathSteps = (subResult: StemSubScore, subjectName: strin
   const rawProcess = (safeParse(subResult.process) || safeParse((subResult as any).core_computation)) + safeParse(subResult.logic);
   const rawResult = safeParse(subResult.result) || safeParse((subResult as any).logical_integration);
 
-  // #region agent log
-  if (discipline === 'physics' && typeof fetch !== 'undefined') {
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '875c85' },
-      body: JSON.stringify({
-        sessionId: '875c85',
-        runId: 'post-fix',
-        hypothesisId: 'H2',
-        location: 'mathScoringUtils.ts:transformToMathSteps:physics',
-        message: 'raw sub scores vs safeParse',
-        data: {
-          inSetup: subResult.setup,
-          inProcess: subResult.process,
-          inResult: subResult.result,
-          inLogic: subResult.logic,
-          rawSetup,
-          rawProcess,
-          rawResult,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
-
   const { declaredMax, setupMax, processMax, resultMax } = getStemSubBucketMaxes(subResult.max_points);
 
   let labels: {
@@ -445,10 +419,9 @@ export const MATH_SUBQUESTION_GEOMETRY_VIZ_PROMPT_APPENDIX = `
 # ════════════════════════════════════════════════════════════════════════════
 # SUB-QUESTION VISUALIZATION MANDATE（題組子題獨立圖示 — CRITICAL）
 # ════════════════════════════════════════════════════════════════════════════
-- **Every** object in \`stem_sub_results[]\` MUST include the key \`visualization_code\`: either \`null\` **or** \`{ "explanation": "...", "visualizations": [ ... ] }\` with at least one **client-renderable** item when **that specific** sub-question benefits from any diagram (plane or solid geometry, coordinate graphs, vectors, function plots, etc.).
+- **數學甲／學測數A／數B Phase3 強制圖像化**：每一子題的 \`visualization_code\` **禁止為 null**。必須輸出 \`{ "explanation": "...", "visualizations": [ ... ] }\`，且至少一項可渲染（\`geometry_json\`、\`svg_diagram\`、非空 \`plotly_chart\`、\`python_plot\` 等）。純代數小題仍須給最小示意（數線、座標點、簡圖），不得以純文字代替。
 - **Per \`sub_id\` binding**: \`visualization_code.explanation\` MUST describe the figure **for that sub-question only** and MUST mention that row's \`sub_id\` (題號／小題編號) in the **first sentence**. **FORBIDDEN**: outputting diagrams only on the first \`stem_sub_results\` item while later items omit \`visualization_code\` yet their written solution still depends on a figure — if a later sub needs a visual, that same row MUST contain its own \`visualization_code\` (you may repeat an equivalent \`geometry_json\` or \`svg_diagram\` when the printed figure is shared across subs).
 - **Per-item titles**: Each object in \`visualizations[]\` that has a \`title\` field SHOULD include that same row's \`sub_id\` in the title (e.g. "（小題乙）座標平面示意") so the UI clearly ties the figure to the sub-question index.
-- **Pure algebra / no diagram** for one sub: set \`visualization_code\` to \`null\` **only for that sub**.
 - **Types** (same as above sections): printed / regular-polygon → \`geometry_json\`; self-authored 2D → \`svg_diagram\` with full \`svgCode\`; 3D → \`plotly_chart\`; explicit functions → \`python_plot\` with required fields or \`plotly_chart\`.
 - **Scoring JSON**: Never remove or repurpose \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`, etc. \`visualization_code\` remains auxiliary only.
 - **Distinct figures per sub**: If sub-questions in a group have **different** figures (forces, circuits, trajectories, coordinates), you MUST NOT copy the parent stem's diagram unchanged into later rows — each row's \`visualization_code\` must match **that** sub's physics/geometry (adapt coordinates, forces, or traces accordingly).
@@ -462,10 +435,9 @@ export const PHYSICS_SUBQUESTION_VIZ_PROMPT_APPENDIX = `
 # ════════════════════════════════════════════════════════════════════════════
 # SUB-QUESTION VISUALIZATION MANDATE — PHYSICS（物理題組子題獨立圖示 — CRITICAL）
 # ════════════════════════════════════════════════════════════════════════════
-- **Every** object in \`stem_sub_results[]\` MUST include the key \`visualization_code\`: either \`null\` **or** \`{ "explanation": "...", "visualizations": [ ... ] }\` with at least one **client-renderable** item when **that** sub-question needs a diagram (free-body, inclined plane, pulley, circuit, optics ray path, \`plotly_chart\` 3D trajectory, \`geometry_json\`, experiment graphs, etc.).
-- **Per \`sub_id\` binding**: \`visualization_code.explanation\` MUST describe the figure **for that sub-question only** and MUST mention that row's \`sub_id\` (題號／小題編號) in the **first sentence**. **FORBIDDEN**: placing diagrams only on the first \`stem_sub_results\` row while later rows have \`null\` yet their solution still relies on a different figure — each such row MUST carry its own \`visualization_code\`.
+- **分科物理（AST 物理）強制圖像化**：每一子題的 \`visualization_code\` **禁止為 null**。必須輸出 \`{ "explanation": "...", "visualizations": [ ... ] }\`，且 \`visualizations\` **至少一項**可渲染（\`svg_diagram\` 含完整 \`svgCode\`、非空 \`plotly_chart.data\`、\`physics_collision\`、\`free_body_diagram\`、\`stem_xy_chart\` 等）。無圖題仍須給最小示意（例如一維碰撞示意、簡化力箭頭草圖），不得以純文字代替。
+- **Per \`sub_id\` binding**: \`visualization_code.explanation\` MUST describe the figure **for that sub-question only** and MUST mention that row's \`sub_id\` (題號／小題編號) in the **first sentence**. **FORBIDDEN**: placing diagrams only on the first \`stem_sub_results\` row while later rows lack a proper \`visualization_code\` yet their solution still relies on a different figure — each such row MUST carry its own \`visualization_code\`.
 - **Per-item titles**: Each \`visualizations[]\` item with a \`title\` SHOULD include that row's \`sub_id\` (e.g. "（乙）受力分析圖").
-- **Pure algebra / no figure** for one sub: \`visualization_code\` may be \`null\` **only for that sub**.
 - **Types**: Mechanics / circuits / optics → \`svg_diagram\` (\`svgCode\`) per sub-domain rules; 3D / fields / trajectories → \`plotly_chart\` with non-empty \`data\`; printed regular polygons (if any) → \`geometry_json\`; function plots → \`python_plot\` with required fields or \`plotly_chart\`.
 - **FORBIDDEN**: Reusing one parent-stem diagram for every sub when subs need different FBDs or circuits — adapt each row's payload to that sub's scenario.
 - **Scoring JSON**: Do not alter \`setup\`, \`process\`, \`result\`, \`logic\`, \`max_points\`; \`visualization_code\` is auxiliary only.

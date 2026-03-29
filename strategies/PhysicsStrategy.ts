@@ -174,7 +174,7 @@ export class PhysicsStrategy implements GradingStrategy {
 
     # ALTERNATIVE SOLUTIONS (MANDATORY — FIXED COUNT)
     If the student's work is CORRECT, you MUST provide **exactly 7** distinct alternative methods (e.g. Energy Conservation, Newton's Laws, Momentum, Dimensional Analysis, Work–Energy, Kinematics, Lagrangian-style shortcut where applicable) with full derivation — **no fewer than 7** and **no duplicates**.
-    **JSON completeness**: You MUST still output **valid, complete JSON** for the entire response. Fully finish, for **every** sub-question: \`feedback\`, \`setup\`/\`process\`/\`result\`/\`logic\`, \`zero_compression\`, \`correct_calculation\`, \`visualization_code\` (or null), and **all seven** \`alternative_solutions\` entries. If length is tight, keep each of the seven methods focused (name + key steps + short 繁中「為何有效」) rather than omitting fields or truncating the JSON.
+    **JSON completeness**: You MUST still output **valid, complete JSON** for the entire response. Fully finish, for **every** sub-question: \`feedback\`, \`setup\`/\`process\`/\`result\`/\`logic\`, \`zero_compression\`, \`correct_calculation\`, \`visualization_code\` (**object** with non-empty \`visualizations\` — **not null** for 分科物理), and **all seven** \`alternative_solutions\` entries. If length is tight, keep each of the seven methods focused (name + key steps + short 繁中「為何有效」) rather than omitting fields or truncating the JSON.
     
     **CRITICAL DETAILED REQUIREMENT FOR EACH OF THE 7 METHODS**:
     1. A clear method name (e.g. "解法一：能量守恆").

@@ -11,7 +11,6 @@ import { formatChemistryText } from '../utils/chemistryFormatUtils';
 /** 模型偶發把同一行內公式貼極多次，導致畫面被相同 KaTeX 洗版；僅摺疊「完全相同的 $...$」連續出現。 */
 function collapseAseaRunawayRepeatedMath(s: string): string {
   if (typeof s !== 'string' || s.length < 80) return s;
-  const before = s.length;
   let out = s.replace(
     /(\$[^$]{1,600}\$)(\s*\1){7,}/g,
     '$1\n\n*（已摺疊連續重複之相同公式，僅保留一則）*',
@@ -20,22 +19,6 @@ function collapseAseaRunawayRepeatedMath(s: string): string {
     /(\$\$[\s\S]{1,8000}?\$\$)(\s*\1){4,}/g,
     '$1\n\n*（已摺疊連續重複之相同區塊公式）*',
   );
-  // #region agent log
-  if (out.length < before && typeof fetch !== 'undefined') {
-    fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
-      body: JSON.stringify({
-        sessionId: 'd7ef55',
-        location: 'LatexRenderer.tsx:collapseRepeatedMath',
-        message: 'collapsed runaway repeated math',
-        data: { hypothesisId: 'H-rep', beforeLen: before, afterLen: out.length },
-        timestamp: Date.now(),
-        runId: 'post-fix',
-      }),
-    }).catch(() => {});
-  }
-  // #endregion
   return out;
 }
 

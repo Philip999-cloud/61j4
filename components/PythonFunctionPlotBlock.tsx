@@ -24,21 +24,6 @@ function getPythonPlotRequestUrls(): string[] {
   return urls;
 }
 
-function postDebugSession(payload: Record<string, unknown>): void {
-  void fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9e0be5' },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
-  if (import.meta.env.DEV) {
-    void fetch('/__asea_debug_ndjson', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-  }
-}
-
 async function fetchPythonPlotSvg(
   url: string,
   body: { func_str: string; x_range: [number, number]; y_range: [number, number]; mode: PythonPlotMode },
@@ -157,17 +142,6 @@ export const PythonFunctionPlotBlock: React.FC<PythonFunctionPlotBlockProps> = (
               setSvg(raw);
               setErr(null);
               setBrowserFallback(false);
-              // #region agent log
-              postDebugSession({
-                sessionId: '9e0be5',
-                runId: 'post-fix',
-                hypothesisId: 'H-plot',
-                location: 'PythonFunctionPlotBlock.tsx:fetch',
-                message: 'python_plot svg ok',
-                data: { url },
-                timestamp: Date.now(),
-              });
-              // #endregion
             }
             return;
           } catch (e) {
@@ -180,31 +154,9 @@ export const PythonFunctionPlotBlock: React.FC<PythonFunctionPlotBlockProps> = (
           if (okFb) {
             setBrowserFallback(true);
             setErr(null);
-            // #region agent log
-            postDebugSession({
-              sessionId: '9e0be5',
-              runId: 'post-fix',
-              hypothesisId: 'H-plot',
-              location: 'PythonFunctionPlotBlock.tsx:fallback',
-              message: 'python_plot plotly fallback',
-              data: { lastErr: lastErr?.message ?? null, tried: urls },
-              timestamp: Date.now(),
-            });
-            // #endregion
           } else {
             setBrowserFallback(false);
             setErr(lastErr?.message ?? '繪圖失敗');
-            // #region agent log
-            postDebugSession({
-              sessionId: '9e0be5',
-              runId: 'post-fix',
-              hypothesisId: 'H-plot',
-              location: 'PythonFunctionPlotBlock.tsx:fail',
-              message: 'python_plot no svg no fallback',
-              data: { lastErr: lastErr?.message ?? null, tried: urls },
-              timestamp: Date.now(),
-            });
-            // #endregion
           }
         }
       } finally {
