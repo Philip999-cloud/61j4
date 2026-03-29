@@ -204,6 +204,14 @@ type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
 你的 JSON 回覆**頂層**必須包含 "compounds" 陣列（與化學科 schema 相同欄位）。
 - 題目若涉及有機分子、代謝物、試劑等可填 name／formula／smiles；無任何化合物或僅單質時輸出空陣列 "compounds": []。
 - 勿省略此鍵；省略將導致結構化輸出失敗。
+
+# BIOLOGY — remarks_zh／feedback 與數值分數一致（CRITICAL）
+T.E.A.C.H.「動態情境路由」的 ✅／⚠️／❌ **必須與你已填入的 final_score、max_score、各子題 setup／process／result／logic 完全一致**，不可先寫「全對」類結論再給低分。
+- 輸出前計算 r = final_score ÷ max_score（max_score > 0）。
+- 若 r < 0.85：remarks_zh 開頭僅能使用「⚠️」或「❌」；**嚴禁**「✅ 完全正確」「卷面評估完全正確」「全對」「滿分」「完美拿下所有分數」「拿下所有分數」等與低分矛盾的總評用語。
+- 若 0.85 ≤ r < 1：開頭用「⚠️」說明尚可加強處，**不可**宣稱「完美」或「所有分數皆拿到」。
+- 僅當 final_score 等於 max_score（在配分尺度上實得滿分）且與各子題加總一致時，始可在 remarks_zh 使用「✅」與「完全正確」類總評。
+- 各子題 feedback 開頭符號須與該子題實得相對於 max_points 一致；未達該子題滿分者不可寫「此子題完全正確」。
 `;
   }
   if (isMathStemSubject(subjectName)) {
@@ -216,6 +224,31 @@ type 使用 "scatter" 繪製滴定曲線或 "mol3d" 展示分子結構。
     result += `\n\n${TEACH_FRAMEWORK_PROMPT}${TEACH_JSON_COMPAT_NOTE}`;
   }
   return result;
+}
+
+/**
+ * 生物科：T.E.A.C.H. 常誘發 remarks_zh 開頭 ✅／「完全正確」與實際 final_score 不一致；依分數加上對照說明並弱化誤導開頭。
+ * 僅處理 remarks_zh，不修改配分欄位。
+ */
+function reconcileBiologyRemarksWithScores(parsed: Record<string, unknown>): void {
+  const final = Number(parsed.final_score);
+  const max = Number(parsed.max_score);
+  if (!Number.isFinite(final) || !Number.isFinite(max) || max <= 0) return;
+  const ratio = final / max;
+  const rz = parsed.remarks_zh;
+  if (typeof rz !== 'string' || !rz.trim()) return;
+  const head = rz.slice(0, 120);
+  const notFullMark = final + 1e-6 < max;
+  const explicitContradiction =
+    (notFullMark || ratio < 0.98) &&
+    /完美拿下所有分數|拿下所有分數|卷面評估完全正確/.test(rz);
+  const checkmarkLowScore = ratio < 0.85 && /✅/.test(head);
+  if (!explicitContradiction && !checkmarkLowScore) return;
+  if (!notFullMark && ratio >= 0.999) return;
+  const pct = Math.round(ratio * 100);
+  const body = rz.replace(/^\s*✅\s*/u, '⚠️ ');
+  parsed.remarks_zh =
+    `⚠️ 【評分對照】本卷實得 **${final}／${max}** 分（約 ${pct}% 滿分）。若下文出現「完全正確」「拿下所有分數」等語，係與分數不一致之表述，**請以分數與子題扣分為準**。\n\n${body}`;
 }
 
 function needsNaturalScienceVizAppendix(subjectName: string): boolean {
@@ -1052,35 +1085,10 @@ export async function runModeratorSynthesis(
             '本子題未取得閱卷官點評；請參考上方主席綜評，或重新批改。';
         }
       }
+      reconcileBiologyRemarksWithScores(parsed as Record<string, unknown>);
     }
     if (/物理|physics/i.test(subjectName)) {
       normalizePhysicsStemSubScoresFromModerator(parsed as Record<string, unknown>);
-    }
-
-    // Flash fallback 產出的 visualization_code 常為空殼（data:[] 或缺少 visualizations），嘗試修復
-    if (Array.isArray(parsed.stem_sub_results)) {
-      for (const sub of parsed.stem_sub_results as Record<string, unknown>[]) {
-        const vc = sub.visualization_code;
-        if (vc && typeof vc === 'object' && !Array.isArray(vc)) {
-          const vcObj = vc as Record<string, unknown>;
-          const vizArr = vcObj.visualizations;
-          if (Array.isArray(vizArr)) {
-            // 修復 plotly_chart 空 data
-            for (const v of vizArr as Record<string, unknown>[]) {
-              if (v.type === 'plotly_chart' && Array.isArray(v.data) && (v.data as unknown[]).length === 0) {
-                // 嘗試從 layout.title 或 x/y 根層級回填
-                if (Array.isArray(v.x) && Array.isArray(v.y) && (v.x as unknown[]).length > 0) {
-                  (v as Record<string, unknown>).data = [{ type: 'scatter', mode: 'lines+markers', x: v.x, y: v.y, name: (v as Record<string, unknown>).name || 'Data' }];
-                }
-              }
-            }
-          }
-          // 模型有時只回傳根層級 type（如 stem_xy_chart）但不包在 visualizations[] 中
-          if (typeof vcObj.type === 'string' && !vizArr) {
-            vcObj.visualizations = [{ ...vcObj }];
-          }
-        }
-      }
     }
   }
   return parsed;

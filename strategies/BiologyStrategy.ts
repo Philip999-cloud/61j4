@@ -27,6 +27,9 @@ IMPORTANT: All output text (feedback, explanations, logic, roadmap) MUST be in T
 * **因果邏輯推論**：原因與結果的連結是否合理且完整？
 * **表達清晰度**：敘述是否具有科學客觀性。
 
+# 主席綜評 remarks_zh 與分數一致（MANDATORY）
+先依 CEEC 給定 final_score、max_score 與各子題得分，再撰寫 remarks_zh：若實得未達滿分或比率明顯偏低，**不得**使用「✅ 完全正確」「卷面評估完全正確」「完美／拿下所有分數」等語；應如實反映失分與待加強處。T.E.A.C.H. 教學段落可肯定優點，但**開頭路由符號與結論語氣必須與數字一致**。
+
 # 🚨 STRICT JSON OUTPUT FORMAT (ZERO TOLERANCE) 🚨
 1. **NO MARKDOWN WRAPPERS**: Output RAW JSON only.
 2. **LATEX DOUBLE ESCAPING**: All LaTeX backslashes MUST be double-escaped (\\\\frac, \\\\rightarrow, etc.).
