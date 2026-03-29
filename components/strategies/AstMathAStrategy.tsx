@@ -407,6 +407,9 @@ const AstMathAStrategy: React.FC<Props> = ({
     subjectName.includes('數學甲') ||
     subjectName.includes('數甲') ||
     /math\s*a\s*\(\s*ast\s*\)/i.test(subjectName);
+  /** 與 stemPhase3DisplayNormalize 生物判斷一致：策略同時要求 zero_compression 與 correct_calculation，須併陳 */
+  const isBiologyStem =
+    subjectName.includes('生物') || /biology/i.test(subjectName);
   const roadmapSteps = Array.isArray(growthRoadmap)
     ? growthRoadmap.filter((s) => typeof s === 'string' && s.trim().length > 0)
     : [];
@@ -480,6 +483,45 @@ const AstMathAStrategy: React.FC<Props> = ({
             const m = Number(sub.max_points);
             return Number.isFinite(m) ? m : '—';
           })();
+
+          // #region agent log
+          if (idx === 0 && typeof fetch !== 'undefined') {
+            const zc = sub.zero_compression as Record<string, unknown> | undefined;
+            const zcFieldTypes =
+              zc && typeof zc === 'object' && !Array.isArray(zc)
+                ? (['given', 'formula', 'substitute', 'derive', 'answer'] as const)
+                    .map((k) => `${k}:${typeof zc[k]}`)
+                    .join('|')
+                : `zc:${zc == null ? 'null' : typeof zc}`;
+            const zh = zeroCompressionHasContent(sub.zero_compression);
+            const cc = sub.correct_calculation;
+            const showCc = !!(cc && (!zh || isAstMathA || isBiologyStem));
+            fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b21aa6' },
+              body: JSON.stringify({
+                sessionId: 'b21aa6',
+                runId: 'post-fix',
+                hypothesisId: 'H1-H3',
+                location: 'AstMathAStrategy.tsx:stemSub0',
+                message: 'bio stem row0 display path',
+                data: {
+                  subjectName,
+                  isBiologyStem,
+                  isAstMathA,
+                  stemSubjectBase,
+                  zeroHas: zh,
+                  zcFieldTypes,
+                  ccType: typeof cc,
+                  ccStrLen: typeof cc === 'string' ? cc.length : 0,
+                  showCorrectCalc: showCc,
+                  feedbackType: typeof sub.feedback,
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {});
+          }
+          // #endregion
 
           return (
             <div key={`${stemRowKey}-${idx}`} className="bg-[var(--bg-card)] rounded-[2.5rem] p-8 border border-[var(--border-color)] shadow-2xl relative overflow-x-auto overflow-y-visible group transition-colors">
@@ -923,7 +965,9 @@ const AstMathAStrategy: React.FC<Props> = ({
               ) : null}
 
               {sub.correct_calculation &&
-                (!zeroCompressionHasContent(sub.zero_compression) || isAstMathA) && (
+                (!zeroCompressionHasContent(sub.zero_compression) ||
+                  isAstMathA ||
+                  isBiologyStem) && (
                  <div className="mt-8 relative z-[5] bg-[var(--bg-main)] p-6 rounded-[2rem] border border-[var(--border-color)] transition-colors">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest mb-4 flex items-center gap-2">
                        <span className="w-2 h-2 rounded-full bg-pink-500"></span>

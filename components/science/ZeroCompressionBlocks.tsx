@@ -10,9 +10,26 @@ const STEP_META: { key: keyof ZeroCompressionSteps; title: string; dot: string }
   { key: 'answer', title: '解答', dot: 'bg-emerald-500' },
 ];
 
+/** 與 stemPhase3DisplayNormalize 的敘述欄位展開一致：模型若回傳巢狀物件，仍應顯示而非空白。 */
+function zeroCompressionStepDisplayText(val: unknown): string {
+  if (val == null) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (Array.isArray(val)) {
+    const parts = val.map((x) => zeroCompressionStepDisplayText(x)).filter((s) => s.length > 0);
+    return parts.join('\n\n');
+  }
+  if (typeof val === 'object') {
+    const o = val as Record<string, unknown>;
+    const keys = Object.keys(o).sort();
+    return keys.map((k) => `**${k}**\n${zeroCompressionStepDisplayText(o[k])}`).join('\n\n');
+  }
+  return String(val);
+}
+
 export function zeroCompressionHasContent(z?: ZeroCompressionSteps | null): boolean {
   if (!z || typeof z !== 'object') return false;
-  return STEP_META.some(({ key }) => String(z[key] ?? '').trim().length > 0);
+  return STEP_META.some(({ key }) => zeroCompressionStepDisplayText(z[key]).length > 0);
 }
 
 interface Props {
@@ -30,7 +47,7 @@ export const ZeroCompressionBlocks: React.FC<Props> = ({ steps, isSolutionOnly }
       <div className="space-y-4">
         {STEP_META.map(({ key, title, dot }) => {
           const raw = steps[key];
-          const text = typeof raw === 'string' ? raw.trim() : '';
+          const text = zeroCompressionStepDisplayText(raw);
           return (
             <div
               key={key}

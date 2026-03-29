@@ -240,8 +240,6 @@ function normalizeSvgResponsive(svg: SVGSVGElement) {
   svg.style.width = '100%';
   svg.style.height = 'auto';
   svg.style.maxWidth = '100%';
-  /** 與 VisualizationRenderer 圖卡 max-h 對齊，避免極寬 viewBox 在寬度 100% 時撐出過高 */
-  svg.style.maxHeight = 'min(72vh, 560px)';
   svg.style.display = 'block';
   svg.style.overflow = 'visible';
   svg.setAttribute('class', `${svg.getAttribute('class') || ''} physics-renderer-svg smart-svg-canvas`.trim());

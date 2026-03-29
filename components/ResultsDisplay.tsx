@@ -473,6 +473,39 @@ const ResultsDisplay: React.FC<Props> = ({
         }),
       }).catch(() => {});
     }
+    const isBioDisplay =
+      subjectName.includes('生物') || /biology/i.test(subjectName);
+    if (isBioDisplay) {
+      const rz = p3?.remarks_zh;
+      const zc0 =
+        sub0 && typeof (sub0 as { zero_compression?: unknown }).zero_compression === 'object'
+          ? (sub0 as { zero_compression: Record<string, unknown> }).zero_compression
+          : null;
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b21aa6' },
+        body: JSON.stringify({
+          sessionId: 'b21aa6',
+          runId: 'post-fix',
+          hypothesisId: 'H4-H5',
+          location: 'ResultsDisplay.tsx:bioStemGate',
+          message: 'biology results wiring',
+          data: {
+            isStem,
+            stemSubResultsLen,
+            stemBlockWouldRender,
+            remarksZhType: typeof rz,
+            sub0FeedbackType: sub0 ? typeof (sub0 as { feedback?: unknown }).feedback : 'no-sub0',
+            zc0KeyTypes: zc0
+              ? ['given', 'formula', 'substitute', 'derive', 'answer']
+                  .map((k) => `${k}:${typeof zc0[k]}`)
+                  .join('|')
+              : 'no-zc0',
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
   }, [
     results,
     subjectName,

@@ -83,8 +83,8 @@ function stableStringifyForVizFingerprint(v: unknown): string {
   }
 }
 
-/** Plotly／StemXY 區塊避免僅用 idx 導致列表變動時實例錯接 */
-function stemPlotlyVizReactKey(vizType: string, idx: number, viz: unknown): string {
+/** STEM visualizations[] 各區塊避免僅用 idx 導致列表變動時實例錯接 */
+function stemVizItemReactKey(vizType: string, idx: number, viz: unknown): string {
   const fp = stableStringifyForVizFingerprint(viz);
   const slice = fp.length <= 100 ? fp : fp.slice(0, 100);
   return `${vizType}-${idx}-${slice}`;
@@ -674,6 +674,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
 }) => {
   const chartId = useRef(`plotly-${Math.random().toString(36).substr(2, 9)}`);
   const [plotlyWebGlNote, setPlotlyWebGlNote] = useState<string | null>(null);
+  const [plotlyFailed, setPlotlyFailed] = useState(false);
 
   const isDarkClass = useSyncExternalStore(
     subscribeHtmlDarkClass,
@@ -703,6 +704,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
 
   useEffect(() => {
     setPlotlyWebGlNote(null);
+    setPlotlyFailed(false);
     const rawTraces = normalizePlotlyData(data);
     // #region agent log
     if (typeof fetch !== 'undefined') {
@@ -1114,6 +1116,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       if (el.clientWidth < 2 || el.clientHeight < 2) return;
       try {
         Plotly.newPlot(el, enhancedData, mergedLayout, config);
+        setPlotlyFailed(false);
         requestAnimationFrame(() => {
           if (!cancelled && el) {
             try {
@@ -1125,6 +1128,7 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
         });
       } catch (e) {
         console.error("Plotly Render Error:", e);
+        setPlotlyFailed(true);
         // #region agent log
         if (typeof fetch !== 'undefined') {
           fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
@@ -1174,8 +1178,8 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
       window.removeEventListener('resize', relayout);
       resizeRo?.disconnect();
       try {
-        if (el) Plotly.purge(el);
-        else Plotly.purge(chartId.current);
+        const purgeEl = el ?? document.getElementById(chartId.current);
+        if (purgeEl) Plotly.purge(purgeEl);
       } catch {
         /* ignore */
       }
@@ -1225,6 +1229,31 @@ const PlotlyChart: React.FC<{ data: any; layout?: any; title?: string; caption?:
             此圖表缺少可繪製的 Plotly 資料（trace 為空或格式無法辨識）。請重試批改，或改以題目圖／SVG 示意呈現。
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (plotlyFailed) {
+    const hint =
+      explanation?.trim() || caption?.trim() || (typeof title === 'string' && title.trim());
+    return (
+      <div className="w-full max-w-full max-h-[min(72vh,560px)] overflow-auto space-y-2">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200/90 shadow-inner">
+          此圖表繪製時發生錯誤（可能為資料格式或瀏覽器 WebGL）。可重試批改、重新整理頁面，或改以題目圖／SVG 示意。
+        </div>
+        {hint ? (
+          <div className="min-h-[120px] rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)] p-4 shadow-inner">
+            {title ? (
+              <div className="mb-2 text-sm font-bold text-[var(--text-primary)]">
+                <LatexRenderer content={String(title)} isInline />
+              </div>
+            ) : null}
+            {explanation?.trim() ? <LatexRenderer content={explanation} /> : null}
+            {caption?.trim() ? (
+              <p className="mt-3 text-center text-xs text-[var(--text-secondary)]">{caption}</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1817,9 +1846,14 @@ export const VisualizationRenderer: React.FC<{
         {displayVisualizations.map((viz, idx) => {
           if (!viz) return null;
           try {
+            const vk = stemVizItemReactKey(
+              typeof viz.type === 'string' ? viz.type : 'viz',
+              idx,
+              viz,
+            );
             if (viz.type === 'plotly_chart') {
               return (
-                <div key={stemPlotlyVizReactKey(viz.type, idx, viz)} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                     <div className="mb-3 flex justify-between items-center px-1">
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>{viz.title || 'Mathematical Model'}</h5>
                     </div>
@@ -1839,7 +1873,7 @@ export const VisualizationRenderer: React.FC<{
               );
             }
             if (viz.type === 'recharts_plot') {
-              return <SmartChart key={idx} data={{ 
+              return <SmartChart key={vk} data={{ 
                   type: 'visualization', 
                   chartType: viz.chartType || 'line', 
                   title: viz.title || 'Chart', 
@@ -1854,7 +1888,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parsePhase3ChemAromatic(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -1875,7 +1909,7 @@ export const VisualizationRenderer: React.FC<{
             if (viz.type === 'physics_wave_interference') {
               const p = parsePhase3WaveInterference(viz as unknown as Record<string, unknown>);
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -1900,7 +1934,7 @@ export const VisualizationRenderer: React.FC<{
             if (viz.type === 'physics_snell_diagram') {
               const p = parsePhase3Snell(viz as unknown as Record<string, unknown>);
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -1927,7 +1961,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parsePhase3StemXY(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={stemPlotlyVizReactKey(viz.type, idx, viz)} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
@@ -1954,7 +1988,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseTitrationCurve(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={stemPlotlyVizReactKey(viz.type, idx, viz)} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
@@ -1980,7 +2014,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseCircuitSchematic(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
@@ -2002,7 +2036,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseChemSmiles2D(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
@@ -2019,7 +2053,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parsePunnettSquare(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-lime-500" />
@@ -2041,7 +2075,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parsePedigree(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-lime-500" />
@@ -2063,7 +2097,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseMermaidFlowchart(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-lime-500" />
@@ -2083,7 +2117,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseEarthCelestial(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
@@ -2105,7 +2139,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseEarthContour(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
@@ -2127,7 +2161,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parseEnergyLevelDiagram(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
@@ -2149,7 +2183,7 @@ export const VisualizationRenderer: React.FC<{
               const p = parsePeriodicTableHighlight(viz as unknown as Record<string, unknown>);
               if (!p) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
@@ -2175,14 +2209,16 @@ export const VisualizationRenderer: React.FC<{
               );
               if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-x-auto overflow-y-visible min-w-0 group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                        <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>{viz.title || 'Diagram'}</h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] max-h-[min(72vh,560px)] w-full min-w-0 h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-x-auto overflow-y-auto max-w-full relative"
+                    className="flex min-h-[240px] max-h-[min(72vh,560px)] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-auto max-w-full relative"
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] max-h-full py-1 [&_svg]:max-h-[min(68vh,500px)] [&_svg]:max-w-full [&_svg]:h-auto" />
+                    <SvgErrorBoundary fallbackLabel="題圖 SVG 無法顯示">
+                      <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] max-h-full py-1 [&_svg]:max-h-[min(68vh,500px)] [&_svg]:max-w-full [&_svg]:h-auto" />
+                    </SvgErrorBoundary>
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2203,7 +2239,7 @@ export const VisualizationRenderer: React.FC<{
               console.warn(`[VisualizationRenderer] 攔截到非 SVG 幾何輸出: ${viz.type}`);
               return (
                 <div
-                  key={idx}
+                  key={vk}
                   className={`text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800 rounded p-2 ${
                     typeof onRetryExtraction === 'function' ? 'cursor-pointer' : ''
                   }`}
@@ -2241,7 +2277,7 @@ export const VisualizationRenderer: React.FC<{
               }
               if (!svgMarkup) return null;
               return (
-                <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-x-auto overflow-y-visible min-w-0 group transition-colors">
+                <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                   <div className="mb-3 flex justify-between items-center px-1">
                     <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
@@ -2249,9 +2285,11 @@ export const VisualizationRenderer: React.FC<{
                     </h5>
                   </div>
                   <div
-                    className="flex min-h-[240px] max-h-[min(72vh,560px)] w-full min-w-0 h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-x-auto overflow-y-auto max-w-full relative"
+                    className="flex min-h-[240px] max-h-[min(72vh,560px)] w-full h-auto flex-col items-center justify-center bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]/60 p-3 sm:p-4 overflow-auto max-w-full relative"
                   >
-                    <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] max-h-full py-1 [&_svg]:max-h-[min(68vh,500px)] [&_svg]:max-w-full [&_svg]:h-auto" />
+                    <SvgErrorBoundary fallbackLabel="題圖 SVG 無法顯示">
+                      <SmartSvg svgCode={svgMarkup} className="svg-content w-full max-w-full min-h-[200px] max-h-full py-1 [&_svg]:max-h-[min(68vh,500px)] [&_svg]:max-w-full [&_svg]:h-auto" />
+                    </SvgErrorBoundary>
                   </div>
                   {viz.caption && (
                     <div className="mt-3 px-4 py-2 bg-[var(--bg-main)] rounded-xl border border-[var(--border-color)]">
@@ -2271,7 +2309,7 @@ export const VisualizationRenderer: React.FC<{
                 if (!mol3dVizHasLoadableStructure(viz)) {
                   return (
                     <div
-                      key={idx}
+                      key={vk}
                       className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200/90"
                     >
                       此題標示為 3D 分子模型，但回傳資料缺少 PubChem CID、SMILES、PDB 或 MOL，無法載入結構。若同欄另有曲線圖，請見下方圖表。
@@ -2279,7 +2317,7 @@ export const VisualizationRenderer: React.FC<{
                   );
                 }
                 return (
-                  <div key={idx} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
+                  <div key={vk} className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors">
                       <div className="mb-3 flex justify-between items-center px-1">
                          <h5 className="text-[10px] font-black text-[var(--text-secondary)] uppercase tracking-widest flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>{viz.title || '3D Molecular Model'}</h5>
                       </div>
@@ -2302,12 +2340,12 @@ export const VisualizationRenderer: React.FC<{
               }
             }
             if (viz.type === 'nanobanan_image' && viz.prompt) {
-              return <InteractiveAnatomyViewer key={idx} vizData={viz} />;
+              return <InteractiveAnatomyViewer key={vk} vizData={viz} />;
             }
             if (viz.type === 'free_body_diagram' && isInclinedPlaneFbdViz(viz)) {
               return (
                 <div
-                  key={idx}
+                  key={vk}
                   className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden"
                 >
                   <div className="mb-3 flex justify-between items-center px-1">
@@ -2332,7 +2370,7 @@ export const VisualizationRenderer: React.FC<{
               if (!fbd) return null;
               return (
                 <FreeBodyVectorDiagram
-                  key={idx}
+                  key={vk}
                   vectors={fbd.forces}
                   objectShape={fbd.objectShape ?? viz.objectShape}
                 />
@@ -2341,7 +2379,7 @@ export const VisualizationRenderer: React.FC<{
             if (viz.type === 'asea_render' && isAseaRenderVizItem(viz)) {
               return (
                 <AseaRenderBlock
-                  key={idx}
+                  key={vk}
                   engine={viz.engine}
                   topic={viz.topic}
                   data={viz.data as Record<string, unknown>}
@@ -2360,7 +2398,7 @@ export const VisualizationRenderer: React.FC<{
               }
               return (
                 <AseaRenderBlock
-                  key={idx}
+                  key={vk}
                   engine="chemistry"
                   topic="molecular_structure"
                   data={viz.data as Record<string, unknown>}
@@ -2375,7 +2413,7 @@ export const VisualizationRenderer: React.FC<{
             if (viz.type === 'python_script' && typeof viz.code === 'string' && viz.code.trim()) {
               return (
                 <div
-                  key={idx}
+                  key={vk}
                   className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden group transition-colors"
                 >
                   <div className="mb-3 flex justify-between items-center px-1">
@@ -2426,7 +2464,7 @@ export const VisualizationRenderer: React.FC<{
               // #endregion
               return (
                 <PythonFunctionPlotBlock
-                  key={idx}
+                  key={vk}
                   title={viz.title}
                   caption={viz.caption}
                   svgCode={pp.svgCode}
@@ -2440,7 +2478,7 @@ export const VisualizationRenderer: React.FC<{
             if (viz.type === 'physics_collision' && viz.parameters?.ball_A && viz.parameters?.ball_B) {
               return (
                 <div
-                  key={idx}
+                  key={vk}
                   className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden"
                 >
                   <div className="mb-3 flex justify-between items-center px-1">
@@ -2466,7 +2504,7 @@ export const VisualizationRenderer: React.FC<{
             ) {
               return (
                 <div
-                  key={idx}
+                  key={vk}
                   className="bg-[var(--bg-card)] p-4 sm:p-5 rounded-[1.5rem] border border-[var(--border-color)] shadow-xl overflow-hidden"
                 >
                   <div className="mb-3 flex justify-between items-center px-1">
