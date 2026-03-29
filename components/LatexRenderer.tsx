@@ -52,6 +52,8 @@ export const LatexRenderer = React.memo(({ content, className = '', isInline = f
 
     // 0. 移除 AI 錯誤的 Markdown 程式碼區塊標記 (例如 ```latex ... ``` 或 ```math ... ```) 導致無法解析為數學公式的問題
     processed = processed.replace(/```(?:latex|tex|math)\s*\n([\s\S]*?)```/g, '\n$1\n');
+    // 無語言標籤的 ``` ... ```（模型常把算式包在內）→ 展開為正文，避免整段以等寬「原始碼」顯示
+    processed = processed.replace(/```\s*\n([\s\S]*?)```/g, '\n$1\n');
 
     // 1. 基礎清洗：將常見的 AI 轉義錯誤還原
     processed = processed.replace(/\\\\\\\\/g, '\\\\'); 

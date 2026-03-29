@@ -1437,6 +1437,24 @@ export const VisualizationRenderer: React.FC<{
                      parsed = null;
                  } else {
                      parsed = { explanation: cleanCode, visualizations: [] };
+                     // #region agent log
+                     fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+                       method: 'POST',
+                       headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
+                       body: JSON.stringify({
+                         sessionId: 'd7ef55',
+                         location: 'VisualizationRenderer.tsx:stringParseFallback',
+                         message: 'viz string fallback to explanation-only',
+                         data: {
+                           hypothesisId: 'H4',
+                           cleanCodeLen: cleanCode.length,
+                           looksLikeJson: cleanCode.trimStart().startsWith('{'),
+                         },
+                         timestamp: Date.now(),
+                         runId: 'post-fix',
+                       }),
+                     }).catch(() => {});
+                     // #endregion
                  }
             }
         }

@@ -651,19 +651,39 @@ const AstMathAStrategy: React.FC<Props> = ({
               {(() => {
                 const subLabel = sub.sub_id?.trim() || `第 ${idx + 1} 小題`;
                 const questionFigureTitle = `題目圖形（${subLabel}）`;
-                const rawVc = sub.visualization_code as
-                  | { explanation?: string; visualizations?: unknown[] }
-                  | null
-                  | undefined;
-                const rawItems = Array.isArray(rawVc?.visualizations) ? rawVc.visualizations : [];
+                const rawVcInput = sub.visualization_code;
+                let rawVc: unknown = rawVcInput;
+                if (typeof rawVcInput === 'string' && rawVcInput.trim()) {
+                  try {
+                    const cleaned = rawVcInput
+                      .trim()
+                      .replace(/^```(?:json)?\s*/i, '')
+                      .replace(/\s*```$/i, '')
+                      .trim();
+                    const parsedVc = JSON.parse(cleaned) as unknown;
+                    if (parsedVc && typeof parsedVc === 'object' && !Array.isArray(parsedVc)) {
+                      rawVc = parsedVc;
+                    }
+                  } catch {
+                    rawVc = rawVcInput.trim();
+                  }
+                }
+                const rawVcObj =
+                  rawVc != null && typeof rawVc === 'object' && !Array.isArray(rawVc)
+                    ? (rawVc as { explanation?: string; visualizations?: unknown[] })
+                    : null;
+                const rawItems = Array.isArray(rawVcObj?.visualizations) ? rawVcObj.visualizations : [];
                 let renderableFromModel: unknown[] = [];
                 try {
                   renderableFromModel = filterRenderableVisualizations(rawItems);
                 } catch {
                   renderableFromModel = [];
                 }
+                /** 與 GradingWorkflow GEOMETRY_PREFETCH_SUBJECT_IDS 對齊：數學甲與分科物理皆有題幹幾何預抓 */
+                const stemUsesQuestionGeometry =
+                  stemSubjectBase === 'math' || stemSubjectBase === 'physics';
                 const prefetchOk =
-                  stemSubjectBase === 'math' &&
+                  stemUsesQuestionGeometry &&
                   prefetchedQuestionGeometry != null &&
                   geometryJsonItemRenderable({
                     type: 'geometry_json',
@@ -684,8 +704,8 @@ const AstMathAStrategy: React.FC<Props> = ({
 
                 if (prefetchFallbackThisSub && renderableFromModel.length === 0) {
                   const explanation =
-                    typeof rawVc?.explanation === 'string' && rawVc.explanation.trim()
-                      ? rawVc.explanation.trim()
+                    typeof rawVcObj?.explanation === 'string' && rawVcObj.explanation.trim()
+                      ? rawVcObj.explanation.trim()
                       : `【${subLabel}】以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。`;
                   visualizationContent = {
                     explanation,
@@ -697,18 +717,18 @@ const AstMathAStrategy: React.FC<Props> = ({
                       },
                     ],
                   };
-                } else if (rawVc != null && typeof rawVc === 'object') {
+                } else if (rawVcObj != null) {
                   const hasModelGeometry = renderableFromModel.some(
                     (it) => (it as { type?: string }).type === 'geometry_json',
                   );
                   if (
                     prefetchFallbackThisSub &&
-                    stemSubjectBase === 'math' &&
+                    stemUsesQuestionGeometry &&
                     renderableFromModel.length > 0 &&
                     !hasModelGeometry
                   ) {
                     const exModel =
-                      typeof rawVc.explanation === 'string' ? rawVc.explanation.trim() : '';
+                      typeof rawVcObj.explanation === 'string' ? rawVcObj.explanation.trim() : '';
                     visualizationContent = {
                       explanation: [
                         exModel,
@@ -726,8 +746,10 @@ const AstMathAStrategy: React.FC<Props> = ({
                       ],
                     };
                   } else {
-                    visualizationContent = rawVc;
+                    visualizationContent = rawVcObj;
                   }
+                } else if (typeof rawVc === 'string' && rawVc.trim()) {
+                  visualizationContent = rawVc.trim();
                 } else if (prefetchFallbackThisSub) {
                   visualizationContent = {
                     explanation: `【${subLabel}】以下為依題幹圖像萃取之示意圖，供對照題意與幾何條件。`,
@@ -741,40 +763,48 @@ const AstMathAStrategy: React.FC<Props> = ({
                   };
                 }
 
-                if (!visualizationContent) return null;
                 // #region agent log
-                if (idx === 0) {
+                if (idx === 0 && stemSubjectBase === 'physics') {
                   const hasGeo = renderableFromModel.some(
                     (it) => (it as { type?: string }).type === 'geometry_json',
                   );
                   let vizBranch = 'other';
                   if (prefetchOk && renderableFromModel.length === 0) {
                     vizBranch = 'prefetch_only_empty_model';
-                  } else if (rawVc != null && typeof rawVc === 'object') {
-                    if (prefetchOk && stemSubjectBase === 'math' && renderableFromModel.length > 0 && !hasGeo) {
+                  } else if (rawVcObj != null) {
+                    if (
+                      prefetchOk &&
+                      stemUsesQuestionGeometry &&
+                      renderableFromModel.length > 0 &&
+                      !hasGeo
+                    ) {
                       vizBranch = 'prepend_question_geometry';
                     } else {
                       vizBranch = 'raw_vc';
                     }
+                  } else if (typeof rawVc === 'string' && rawVc.trim()) {
+                    vizBranch = 'raw_vc_string';
                   } else if (prefetchOk) {
                     vizBranch = 'prefetch_only_no_raw_object';
                   }
                   fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '9aef34' },
+                    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd7ef55' },
                     body: JSON.stringify({
-                      sessionId: '9aef34',
+                      sessionId: 'd7ef55',
                       location: 'AstMathAStrategy.tsx:vizMerge',
-                      message: 'sub0 visualization merge',
+                      message: 'physics stem_sub visualization path',
                       data: {
-                        hypothesisId: 'H3',
+                        hypothesisId: 'H1-H3',
                         stemSubjectBase,
+                        stemUsesQuestionGeometry,
                         prefetchOk,
+                        vcInputType: typeof sub.visualization_code,
                         rawVizLen: rawItems.length,
                         renderableFromModelLen: renderableFromModel.length,
                         hasModelGeometryJson: hasGeo,
                         vizBranch,
-                        isAstMathA,
+                        hasVizContent: visualizationContent != null,
                       },
                       timestamp: Date.now(),
                       runId: 'post-fix',
@@ -782,6 +812,7 @@ const AstMathAStrategy: React.FC<Props> = ({
                   }).catch(() => {});
                 }
                 // #endregion
+                if (!visualizationContent) return null;
                 const vc: unknown = visualizationContent;
                 const chem = subjectName.includes('化學') || subjectName.includes('Chemistry');
                 const rootMol3dOk =
@@ -851,10 +882,10 @@ const AstMathAStrategy: React.FC<Props> = ({
                        prefetchedGeometryJson={prefetchedQuestionGeometry}
                        onRetryExtraction={onRetryQuestionGeometryExtraction}
                        allowPrefetchedGeometryFallback={
-                         stemSubjectBase === 'math' && (rows.length <= 1 || idx === 0)
+                         stemUsesQuestionGeometry && (rows.length <= 1 || idx === 0)
                        }
                        prefetchedGeometryVizTitle={
-                         stemSubjectBase === 'math'
+                         stemUsesQuestionGeometry
                            ? `題目圖形（${sub.sub_id?.trim() || `第 ${idx + 1} 小題`}）`
                            : undefined
                        }
