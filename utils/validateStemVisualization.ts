@@ -21,6 +21,7 @@ import { safeParseVisualizationItem } from './stemVisualizationZod';
 
 const PLOTLY_TRACE_TYPES = new Set([
   'scatter',
+  'scattergl',
   'bar',
   'line',
   'pie',
@@ -38,7 +39,22 @@ const PLOTLY_TRACE_TYPES = new Set([
   'treemap',
   'sunburst',
   'sankey',
+  'volume',
+  'cone',
+  'isosurface',
 ]);
+
+/** 模型偶將 plotly_chart.data 整段序列成 JSON 字串；解析後再交給 normalize／驗證 */
+export function coercePlotlyDataJsonIfString(data: unknown): unknown {
+  if (typeof data !== 'string') return data;
+  const s = data.trim();
+  if (!s.startsWith('[') && !s.startsWith('{')) return data;
+  try {
+    return JSON.parse(s) as unknown;
+  } catch {
+    return data;
+  }
+}
 
 /** 單一 Plotly trace 物件（非包在陣列裡）是否像有可繪資料 */
 function singlePlotlyTraceLooksRenderable(o: Record<string, unknown>): boolean {
@@ -55,15 +71,30 @@ function singlePlotlyTraceLooksRenderable(o: Record<string, unknown>): boolean {
   if (t === 'scatter3d') {
     return o.x != null || o.y != null || o.z != null;
   }
+  if (t === 'histogram' && Array.isArray(o.x) && o.x.length > 0) return true;
+  if (
+    (t === 'scatter' ||
+      t === 'scattergl' ||
+      t === 'bar' ||
+      t === 'line' ||
+      t === 'pie') &&
+    ((Array.isArray(o.y) && o.y.length > 0) || (Array.isArray(o.x) && o.x.length > 0))
+  ) {
+    return true;
+  }
   if (o.x != null && o.y != null) return true;
+  if (t === 'volume' || t === 'cone' || t === 'isosurface') {
+    return o.x != null || o.y != null || o.z != null || o.value != null;
+  }
   return false;
 }
 
 export function plotlyDataLooksRenderable(data: unknown): boolean {
-  if (data == null) return false;
-  if (Array.isArray(data) && data.length > 0) return true;
-  if (typeof data === 'object' && !Array.isArray(data)) {
-    const o = data as Record<string, unknown>;
+  const coerced = coercePlotlyDataJsonIfString(data);
+  if (coerced == null) return false;
+  if (Array.isArray(coerced) && coerced.length > 0) return true;
+  if (typeof coerced === 'object' && !Array.isArray(coerced)) {
+    const o = coerced as Record<string, unknown>;
     if (Array.isArray(o.data) && o.data.length > 0) return true;
     if (Array.isArray(o.traces) && o.traces.length > 0) return true;
     if (o.x != null && o.y != null) return true;

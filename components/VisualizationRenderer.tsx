@@ -63,6 +63,7 @@ import {
   parsePeriodicTableHighlight,
 } from '../utils/phase3VizPayload';
 import {
+  coercePlotlyDataJsonIfString,
   filterRenderableVisualizations,
   geometryJsonItemRenderable,
   plotlyDataLooksRenderable,
@@ -288,9 +289,28 @@ interface VisualizationPayload {
 }
 
 const PLOTLY_TRACE_TYPES = new Set([
-  'scatter', 'bar', 'line', 'pie', 'histogram', 'box', 'violin',
-  'heatmap', 'contour', 'surface', 'mesh3d', 'scatter3d', 'scatterpolar',
-  'waterfall', 'funnel', 'treemap', 'sunburst', 'sankey',
+  'scatter',
+  'scattergl',
+  'bar',
+  'line',
+  'pie',
+  'histogram',
+  'box',
+  'violin',
+  'heatmap',
+  'contour',
+  'surface',
+  'mesh3d',
+  'scatter3d',
+  'scatterpolar',
+  'waterfall',
+  'funnel',
+  'treemap',
+  'sunburst',
+  'sankey',
+  'volume',
+  'cone',
+  'isosurface',
 ]);
 
 const ROOT_VIZ_TYPES = new Set([
@@ -530,9 +550,9 @@ function lenientFallbackVizItems(raw: unknown[] | undefined | null): Visualizati
       // #region agent log
       fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '4e4e43' },
         body: JSON.stringify({
-          sessionId: '09f966',
+          sessionId: '4e4e43',
           hypothesisId: 'H1',
           location: 'VisualizationRenderer.tsx:lenientFallbackVizItems',
           message: 'plotly_chart lenient candidate',
@@ -540,6 +560,7 @@ function lenientFallbackVizItems(raw: unknown[] | undefined | null): Visualizati
             looksRenderable: plotlyDataLooksRenderable(o.data),
             dataIsArray: Array.isArray(o.data),
             dataLen: Array.isArray(o.data) ? o.data.length : null,
+            dataTypeOf: typeof o.data,
             dataKeys:
               o.data != null && typeof o.data === 'object' && !Array.isArray(o.data)
                 ? Object.keys(o.data as object).slice(0, 8)
@@ -576,7 +597,8 @@ function lenientFallbackVizItems(raw: unknown[] | undefined | null): Visualizati
 // -------------------------------------------------------------------
 // 繪圖引擎：注入 GeoGebra 風格
 // -------------------------------------------------------------------
-const normalizePlotlyData = (raw: any): any[] | null => {
+const normalizePlotlyData = (rawIn: any): any[] | null => {
+  const raw: any = coercePlotlyDataJsonIfString(rawIn);
   if (raw == null) return null;
   if (Array.isArray(raw) && raw.length > 0) return raw;
   if (typeof raw === 'object' && Array.isArray(raw.data) && raw.data.length > 0) return raw.data;
@@ -611,6 +633,17 @@ const normalizePlotlyData = (raw: any): any[] | null => {
     ) {
       return [raw];
     }
+    if (
+      (raw.type === 'scatter' ||
+        raw.type === 'scattergl' ||
+        raw.type === 'bar' ||
+        raw.type === 'line' ||
+        raw.type === 'pie') &&
+      ((Array.isArray(raw.y) && raw.y.length > 0) || (Array.isArray(raw.x) && raw.x.length > 0))
+    ) {
+      return [raw];
+    }
+    if (raw.type === 'histogram' && Array.isArray(raw.x) && raw.x.length > 0) return [raw];
   }
   return null;
 };
@@ -618,7 +651,10 @@ const normalizePlotlyData = (raw: any): any[] | null => {
 /** 解開 visualizations[] 內 plotly_chart.data 的雙層包裝或單一 trace 誤放在 data */
 function unwrapPlotlyChartVisualizationItem(viz: any): any {
   if (!viz || viz.type !== 'plotly_chart') return viz;
-  const raw = viz.data;
+  const raw = coercePlotlyDataJsonIfString(viz.data);
+  if (raw !== viz.data) {
+    viz = { ...viz, data: raw };
+  }
   if (raw == null) return viz;
   if (Array.isArray(raw) && raw.length > 0) return viz;
   if (typeof raw !== 'object' || Array.isArray(raw)) return viz;
@@ -629,6 +665,20 @@ function unwrapPlotlyChartVisualizationItem(viz: any): any {
   if (Array.isArray(o.traces) && o.traces.length > 0) {
     return { ...viz, data: o.traces, layout: viz.layout ?? o.layout };
   }
+  const inner = o.data;
+  if (
+    inner != null &&
+    typeof inner === 'object' &&
+    !Array.isArray(inner) &&
+    Array.isArray((inner as Record<string, unknown>).data) &&
+    (inner as { data: unknown[] }).data.length > 0
+  ) {
+    return {
+      ...viz,
+      data: (inner as { data: unknown[] }).data,
+      layout: viz.layout ?? o.layout ?? (inner as { layout?: unknown }).layout,
+    };
+  }
   const t = o.type;
   if (typeof t === 'string' && PLOTLY_TRACE_TYPES.has(t)) {
     const singleOk =
@@ -637,7 +687,14 @@ function unwrapPlotlyChartVisualizationItem(viz: any): any {
         ((Array.isArray(o.x) && (o.x as unknown[]).length > 0) ||
           (o.i != null && o.j != null && o.k != null))) ||
       (t === 'scatter3d' && (o.x != null || o.y != null || o.z != null)) ||
-      (o.x != null && o.y != null);
+      (o.x != null && o.y != null) ||
+      (t === 'histogram' && Array.isArray(o.x) && o.x.length > 0) ||
+      ((t === 'scatter' ||
+        t === 'scattergl' ||
+        t === 'bar' ||
+        t === 'line' ||
+        t === 'pie') &&
+        ((Array.isArray(o.y) && o.y.length > 0) || (Array.isArray(o.x) && o.x.length > 0)));
     if (singleOk) {
       return { ...viz, data: [raw], layout: viz.layout ?? (raw as { layout?: unknown }).layout };
     }
@@ -1398,6 +1455,38 @@ export const VisualizationRenderer: React.FC<{
   const displayVisualizations = useMemo((): VisualizationItem[] => {
     const raw = vizPayload?.visualizations;
     const base = filterRenderableVisualizations(raw) as VisualizationItem[];
+    // #region agent log
+    if (Array.isArray(raw) && raw.length > 0) {
+      const reasons: { type: string; reason?: string }[] = [];
+      for (const it of raw) {
+        if (!it || typeof it !== 'object' || Array.isArray(it)) continue;
+        const vr = validateVisualizationItem(it);
+        if (!vr.valid) {
+          reasons.push({
+            type: String((it as { type?: string }).type ?? '?'),
+            reason: vr.reason,
+          });
+        }
+        if (reasons.length >= 5) break;
+      }
+      fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '4e4e43' },
+        body: JSON.stringify({
+          sessionId: '4e4e43',
+          hypothesisId: 'H2',
+          location: 'VisualizationRenderer.tsx:displayVisualizations',
+          message: 'viz filter vs raw',
+          data: {
+            rawLen: raw.length,
+            strictPass: base.length,
+            sampleRejected: reasons,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
     if (base.length > 0) return base;
     const lenient = lenientFallbackVizItems(raw as unknown[] | undefined);
     if (lenient.length > 0) return lenient;
@@ -1647,14 +1736,33 @@ export const VisualizationRenderer: React.FC<{
            ) {
              vizItem = { ...vizItem, svgCode: vizItem.code };
            }
-           // plotly_chart: 解開巢狀 { data: [...], layout: {...} }
+           // plotly_chart: 字串 JSON、巢狀 { data: [...] }、雙層 data.data（與 unwrapPlotlyChartVisualizationItem 對齊）
            if (type === 'plotly_chart') {
-             const raw = vizItem.data || parsed.data;
-             if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-               if (Array.isArray(raw.data)) { vizItem.data = raw.data; if (raw.layout) vizItem.layout = raw.layout; }
-               else if (raw.x && raw.y) { vizItem.data = [raw]; }
+             let vd: unknown = coercePlotlyDataJsonIfString(vizItem.data ?? parsed.data);
+             if (Array.isArray(vd) && vd.length > 0) {
+               vizItem = { ...vizItem, data: vd };
+             } else if (vd && typeof vd === 'object' && !Array.isArray(vd)) {
+               const r = vd as Record<string, unknown>;
+               if (Array.isArray(r.data) && r.data.length > 0) {
+                 vizItem = { ...vizItem, data: r.data, layout: vizItem.layout ?? r.layout };
+               } else if (
+                 r.data != null &&
+                 typeof r.data === 'object' &&
+                 !Array.isArray(r.data) &&
+                 Array.isArray((r.data as { data?: unknown[] }).data) &&
+                 (r.data as { data: unknown[] }).data.length > 0
+               ) {
+                 vizItem = {
+                   ...vizItem,
+                   data: (r.data as { data: unknown[] }).data,
+                   layout: vizItem.layout ?? r.layout,
+                 };
+               } else if (r.x != null && r.y != null) {
+                 vizItem = { ...vizItem, data: [vd] };
+               }
              }
              if (!vizItem.layout && parsed.layout) vizItem.layout = parsed.layout;
+             vizItem = unwrapPlotlyChartVisualizationItem(vizItem);
            }
            
            setParsedData({ 

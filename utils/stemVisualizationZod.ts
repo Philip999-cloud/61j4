@@ -3,6 +3,7 @@ import { z } from 'zod';
 /** Plotly trace `type` values accepted by validateVisualizationItem default branch. */
 export const PLOTLY_TRACE_TYPE_LIST = [
   'scatter',
+  'scattergl',
   'bar',
   'line',
   'pie',
@@ -20,6 +21,9 @@ export const PLOTLY_TRACE_TYPE_LIST = [
   'treemap',
   'sunburst',
   'sankey',
+  'volume',
+  'cone',
+  'isosurface',
 ] as const;
 
 const ROOT_VIZ_TYPES = [

@@ -104,57 +104,85 @@ function repairVisualizationCodePlotlyItems(
       const expl = typeof vcObj.explanation === 'string' ? vcObj.explanation : '';
       const title = typeof item.title === 'string' ? item.title : '';
       const ctx = `${expl}\n${title}`;
-      if (!/動量|碰撞|向量圖|向量|守恆|momentum|collision|impulse/i.test(ctx)) continue;
+      const isEnergyPartition =
+        /動能|系統動能|能量分配|動能分配|內能|位能|機械能|kinetic|kinetic\s*energy|partition|\bKE\b/i.test(
+          ctx,
+        );
+      const isMomentumLike =
+        /動量|碰撞|向量圖|守恆|momentum|collision|impulse/i.test(ctx) ||
+        (/向量/.test(ctx) && !/動能|能量分配|動能分配|系統動能/i.test(ctx));
+      if (!isEnergyPartition && !isMomentumLike) continue;
+      const injectKind = isEnergyPartition ? 'energy_bar' : 'momentum_lines';
       // #region agent log
       fetch('http://127.0.0.1:7868/ingest/30be66e8-43e1-4847-8aca-d71a90266b5e', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '09f966' },
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '4e4e43' },
         body: JSON.stringify({
-          sessionId: '09f966',
+          sessionId: '4e4e43',
           hypothesisId: 'H4',
           location: 'stemPhase3DisplayNormalize.ts:repairVisualizationCodePlotlyItems',
-          message: 'injected minimal physics momentum plotly traces',
-          data: { titleLen: title.length, explLen: expl.length },
+          message: 'injected minimal physics plotly traces',
+          data: { injectKind, titleLen: title.length, explLen: expl.length },
           timestamp: Date.now(),
         }),
       }).catch(() => {});
       // #endregion
-      item.data = [
-        {
-          type: 'scatter',
-          mode: 'lines+markers',
-          x: [0, 1.2],
-          y: [0.25, 0.25],
-          name: '碰前 p₁ 方向',
-          line: { width: 4, color: '#1565C0' },
-          marker: { size: 8 },
-        },
-        {
-          type: 'scatter',
-          mode: 'lines+markers',
-          x: [0, 0.15],
-          y: [0, 0],
-          name: '碰前 p₂≈0',
-          line: { width: 3, color: '#64748b' },
-          marker: { size: 6 },
-        },
-        {
-          type: 'scatter',
-          mode: 'lines+markers',
-          x: [0, -0.5],
-          y: [0, 0.2],
-          name: '碰後示意',
-          line: { width: 4, color: '#D32F2F' },
-          marker: { size: 8 },
-        },
-      ];
-      if (item.layout == null || typeof item.layout !== 'object' || Array.isArray(item.layout)) {
-        item.layout = {
-          showlegend: true,
-          xaxis: { title: 'x', zeroline: true },
-          yaxis: { title: 'y', zeroline: true },
-          margin: { t: 28 },
-        };
+      if (injectKind === 'energy_bar') {
+        item.data = [
+          {
+            type: 'bar',
+            x: ['物塊 A', '物塊 B'],
+            y: [0.42, 0.58],
+            name: '動能占比（示意）',
+            marker: { color: ['#1565C0', '#D32F2F'] },
+          },
+        ];
+        if (item.layout == null || typeof item.layout !== 'object' || Array.isArray(item.layout)) {
+          item.layout = {
+            showlegend: false,
+            xaxis: { title: '' },
+            yaxis: { title: '相對占比（示意）', rangemode: 'tozero' },
+            margin: { t: 28 },
+          };
+        }
+      } else {
+        item.data = [
+          {
+            type: 'scatter',
+            mode: 'lines+markers',
+            x: [0, 1.2],
+            y: [0.25, 0.25],
+            name: '碰前 p₁ 方向',
+            line: { width: 4, color: '#1565C0' },
+            marker: { size: 8 },
+          },
+          {
+            type: 'scatter',
+            mode: 'lines+markers',
+            x: [0, 0.15],
+            y: [0, 0],
+            name: '碰前 p₂≈0',
+            line: { width: 3, color: '#64748b' },
+            marker: { size: 6 },
+          },
+          {
+            type: 'scatter',
+            mode: 'lines+markers',
+            x: [0, -0.5],
+            y: [0, 0.2],
+            name: '碰後示意',
+            line: { width: 4, color: '#D32F2F' },
+            marker: { size: 8 },
+          },
+        ];
+        if (item.layout == null || typeof item.layout !== 'object' || Array.isArray(item.layout)) {
+          item.layout = {
+            showlegend: true,
+            xaxis: { title: 'x', zeroline: true },
+            yaxis: { title: 'y', zeroline: true },
+            margin: { t: 28 },
+          };
+        }
       }
     }
   }
